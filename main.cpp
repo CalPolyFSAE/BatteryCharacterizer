@@ -10,39 +10,58 @@
  * File Desc.: Main file for Battery Characterizer
  * Date: 12/16/2016
  */
+
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
-
+/** pin mappings:
+ *
+ *
+ */
 uint32_t read_current(uint32_t batt){
 	uint32_t current;
 	return current;
 }
 
-uint32_t read_volatge(uint32_t batt){
+uint32_t read_voltage(uint32_t batt){
 	uint32_t voltage;
 	return voltage;
 }
 
-uint32_t charge_3_65(){
+
+uint32_t charge(uint32_t batt, uint32_t vStop){
 	uint32_t x;
 	return x;
 }
 
-uint32_t charge_4_2(){
-	uint32_t x;
-	return x;
-}
-
-uint32_t discharge_30A(){
+uint32_t discharge_30A(batt){
 
 	uint32_t time;
 	return time;
 }
+/** Might want to change the discharge functions so
+ * we only have 1 function with a 30A CC and 30W CP
+ * option on the parameters. Not sure how to
+ * implement this though. Code for CC and CP are almost
+ * identical. This is because there parameter for the
+ * while loop for discharging. Also, need to figure out
+ * how to write values outside of the function to report
+ * voltage and current continuously. This isn't a
+ * necessary feature, but it would be very nice to have.
+ * Also, need to figure out how to set fuse bits, and do
+ * some port mapping.
+ */
+uint32_t discharge_30W(uint32_t batt, uint32_t vStop){
 
-uint32_t discharge_30W(){
-
-	uint32_t time;
+	uint32_t time, voltage, current;
+	voltage = read_voltage(batt);
+	current = read_current(batt);
+	while(voltage >= vStop){
+		//discharge batteries
+		disc_en = 0b1;
+		voltage = read_voltage(batt);
+		current = read_current(batt);
+	}
 	return time;
 
 }
@@ -51,9 +70,8 @@ int main(){
 
 	uint32_t vBatt0, iBatt0, pBatt0, vBatt1, iBatt1, pBatt1;
 	uint32_t vBatt2, iBatt2, pBatt2, vBatt3, iBatt3, pBatt3;
-	pBatt0 = vBatt0 * iBatt0; -- getting power of battery
+	pBatt0 = vBatt0 * iBatt0; // getting power of battery
 	pBatt1 = vBatt1 * iBatt1;
 	pBatt2 = vBatt2 * iBatt2;
 	pBatt3 = vBatt3 * iBatt3;
-
 }
