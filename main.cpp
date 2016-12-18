@@ -20,8 +20,8 @@
  *
  * T_Batt_1 = PC5
  * T_Batt_2 = PC4
- * T_Batt_3 = PC3
- * T_Batt_4 = PC2
+ * T_Batt_3 = PC3 jumper wire to ADC7 cut existing trace
+ * T_Batt_4 = PC2 jumper wire to ADC6 cut existing trace
  * RX[UART] = PD0
  * TX[UART] = PD1
  * CS0[SPI] = PB2
@@ -31,11 +31,11 @@
  * CHARGE_1_1 = PB1
  * CHARGE_2_1 = PD6
  * CHARGE_EN_1 = PB0
- * BATT_EN_1_1 = ADC6
+ * BATT_EN_1_1 = ADC6 jumper wire to PC2 cut existing trace
  * BATT_EN_2_1 = PD7
  * DISC_EN_1 = PD5
  * CHARGE_1_2 = PD2
- * CHARGE_2_2 = ADC7
+ * CHARGE_2_2 = ADC7 jumper wire to PC3 cut existing trace
  * CHARGE_EN_2 = PD4
  * BATT_EN_1_2 = PD3
  * BATT_EN_2_2 = PC0
