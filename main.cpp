@@ -14,6 +14,8 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
+#include <avr/io.h>
+
 /** pin mappings:
  *
  * T_Batt_1 = PC5
