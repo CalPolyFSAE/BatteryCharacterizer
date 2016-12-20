@@ -155,6 +155,9 @@ int main() {
 	uint32_t vBatt0, iBatt0, pBatt0, vBatt1, iBatt1, pBatt1;
 	uint32_t vBatt2, iBatt2, pBatt2, vBatt3, iBatt3, pBatt3;
 	bool battTested0, battTested1, battTested2, battTested3; //boolean for whether or not the battery has been tested
+	Initialize_ADC0();
+	Initialize_PWM();
+	Initialize_SPI_Master();
 	vBatt0 = readVoltage(0); //same for batt 1, 2, and 3
 
 }
