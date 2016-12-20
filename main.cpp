@@ -33,6 +33,8 @@
 #define BATT_EN_1_2 3
 #define BATT_EN_2_2 0
 #define DISC_EN_2   1
+#define XTAL1       6 
+#define XTAL2       7
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
@@ -185,10 +187,10 @@ int main() {
 	uint32_t vBatt0, iBatt0, pBatt0, vBatt1, iBatt1, pBatt1;
 	uint32_t vBatt2, iBatt2, pBatt2, vBatt3, iBatt3, pBatt3;
 	bool battTested0, battTested1, battTested2, battTested3; //boolean for whether or not the battery has been tested
-	//Deceleration of Outputs and Inputs (Might want to double check to make sure I got it correct -Jair)
-	DDRC |=  (1<<BATT_EN_2_2) | (1<<DISC_EN_2) | (1<<BATT_END_1_1) | (1<<CHARGE_2_2) 
+	//Deceleration of Outputs and Inputs
+	DDRC |=  (1<<BATT_EN_2_2) | (1<<DISC_EN_2) | (1<<BATT_EN_1_1) | (1<<CHARGE_2_2) 
 	DDRD &= ~(1<<RX);
-	DDRB &= ~((1<<MISO)|(1<< PB6)|(1<< PB7));
+	DDRB &= ~((1<<MISO)|(1<< XTAL1)|(1<< XTAL2));
 	//Initilization of Communication Protocols
 	Initialize_ADC0();
 	Initialize_PWM();
