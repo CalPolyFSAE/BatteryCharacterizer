@@ -29,7 +29,7 @@
  * MISO [SPI] = PB4 SPI MISO
  * SCK [SPI] = PB5 SPI clock
  * CHARGE_1_1 = PB1 pull low to enable charging battery 1
- * CHARGE_2_1 = PD6 pull low to enable charging of battery 2
+ * CHARGE_2_1 = PD6 jumper wire to PC 1 pull low to enable charging of battery 2
  * CHARGE_EN_1 = PB0 push high to enable charging of either battery 1 or 2
  * BATT_EN_1_1 = ADC6 jumper wire to PC2 cut existing trace
  * BATT_EN_2_1 = PD7 pull low to enable charging or discharging of battery 2
@@ -39,10 +39,12 @@
  * CHARGE_EN_2 = PD4 same as Charge_En_1, but for battery 3 and 4
  * BATT_EN_1_2 = PD3 same as batt_en_1_1 but for battery 3
  * BATT_EN_2_2 = PC0 same as batt_en_1_1, but for battery 4
- * DISC_EN_2 = PC1 same as disc_en_2 but for battery 3 and  4
+ * DISC_EN_2 = PC1 jumper wire to PD6 same as disc_en_2 but for battery 3 and 4
  *
  */
-
+// NOTE: DISC_EN_2 and CHARGE_2_1 are swapped
+// 		 T_Batt_3 and Charge_2_2 are swapped
+//		 T_Batt_4 and  Batt_En_1_1
 /** pin mapping on ADC:
  * Charge_Sense_1 = IN7 Current sense for charging of battery 1 and 2
  * Batt_Conn_1_1 = IN5 Voltage of battery 1
