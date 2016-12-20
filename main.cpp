@@ -53,33 +53,31 @@
  * Batt_Conn_2_2 = IN2 Voltage of battery 4
  * I_Sense_2 = IN4  Current sense of discharging of battery 3 and 4
  */
-uint32_t readCurrent(uint8_t batt){//batt refers to which battery to enable
+uint32_t readCurrent(uint8_t batt) { //batt refers to which battery to enable
 	uint32_t current;
 	//this should read the ADC
 	return current;
 }
 
-uint32_t readVoltage(uint8_t batt){//batt refers to which battery enable
+uint32_t readVoltage(uint8_t batt) { //batt refers to which battery enable
 	uint32_t voltage;
 	return voltage;
 }
 
-
-uint32_t charge(uint8_t batt, uint32_t vStop, uint32_t iStop){// batt refers to which battery to enable. vstop refers to what voltage to start checking Istop at, or when to cutoff if vstop is not 4.2V. Istop refers to what current to stop charging at
+uint32_t charge(uint8_t batt, uint32_t vStop, uint32_t iStop) { // batt refers to which battery to enable. vstop refers to what voltage to start checking Istop at, or when to cutoff if vstop is not 4.2V. Istop refers to what current to stop charging at
 	uint32_t time, stop_val;
-	if (vStop == 4.2){
+	if (vStop == 4.2) {
 		stop_val = iStop;
-	}
-	else{
+	} else {
 		stop_val = vStop + 0.5; //0.5 refers to voltage, needs to be scaled properly
 	}
 	return time;
 }
 
-uint32_t discharge15A(uint8_t batt,uint32_t vBatt,uint32_t iBatt){ //batt refers to which battery to enable
+uint32_t discharge15A(uint8_t batt, uint32_t vBatt, uint32_t iBatt) { //batt refers to which battery to enable
 
-	uint32_t ;
-	return ;
+	uint32_t;
+	return;
 }
 /** Needed Features/improvements
  * Might want to change the discharge functions so
@@ -94,23 +92,23 @@ uint32_t discharge15A(uint8_t batt,uint32_t vBatt,uint32_t iBatt){ //batt refers
  * Also, need to figure out how to set fuse bits, and do
  * some port mapping.
  */
-uint32_t discharge30W(uint8_t batt, uint32_t vStop){ //batt refers to which battery to enable
+uint32_t discharge30W(uint8_t batt, uint32_t vStop) { //batt refers to which battery to enable
 
 	uint32_t voltage, current, disc_en;
 	voltage = readVoltage(batt);
 	current = readCurrent(batt);
 
-	while(voltage >= vStop){
+	while (voltage >= vStop) {
 		//discharge batteries
 		disc_en = 1;
 		voltage = readVoltage(batt);
 		current = readCurrent(batt);
 	}
-	return ;
+	return;
 
 }
 
-void logBattery(uint8_t batt, uint32_t vBatt, uint32_t iBatt, uint32_t pBatt){ //sends data to computer via usb through ftdi chip with uart
+void logBattery(uint8_t batt, uint32_t vBatt, uint32_t iBatt, uint32_t pBatt) { //sends data to computer via usb through ftdi chip with uart
 	double voltage, current, power;
 	voltage = double(vBatt) / 4096;
 	current = double(iBatt) / 4096;
@@ -118,23 +116,23 @@ void logBattery(uint8_t batt, uint32_t vBatt, uint32_t iBatt, uint32_t pBatt){ /
 }
 
 void Initialize_SPI_Master(void) //correct values for each register still need to be determined
-{
-	SPCR = (0<<SPIE) | 		//No interrupts
-	(1<<SPE) | 				//SPI enabled
-	(0<<DORD) | 			//send MSB first
-	(1<<MSTR) | 			//master
-	(0<<CPOL) | 			//clock idles low
-	(0<<CPHA) | 			//sample leading edge
-	(0<<SPR1) | (0<<SPR0) ; //clock speed
-	SPSR = (0<<SPIF) | 		//SPI interrupt flag
-	(0<<WCOL) | 			//Write collision flag
-	(0<<SPI2X) ; 			//Doubles SPI clock
+		{
+	SPCR = (0 << SPIE) | 		//No interrupts
+			(1 << SPE) | 				//SPI enabled
+			(0 << DORD) | 			//send MSB first
+			(1 << MSTR) | 			//master
+			(0 << CPOL) | 			//clock idles low
+			(0 << CPHA) | 			//sample leading edge
+			(0 << SPR1) | (0 << SPR0); //clock speed
+	SPSR = (0 << SPIF) | 		//SPI interrupt flag
+			(0 << WCOL) | 			//Write collision flag
+			(0 << SPI2X); 			//Doubles SPI clock
 	PORTB = 1 << SS;  		// make sure SS is high
-	
+
 }
 
 void Initialize_PWM(void) //correct values for each register still need to be determined
-{
+		{
 	DDRD = 0xFF; 			//set port D as outputs
 	TCCR0A = 0b10100011; 		//timer set to fast pwm
 	TCCR0B = 3; 			//timer clk = system clk / 64;
@@ -144,20 +142,17 @@ void Initialize_PWM(void) //correct values for each register still need to be de
 }
 
 void Initialize_ADC0(void) //correct values for each register still need to be determined
-{
+		{
 	ADCSRA = 0x87;	//Turn On ADC and set prescaler (CLK/128)
 	ADCSRB = 0x00;	//turn off autotrigger
 	ADMUX = 0x00;    	//Set ADC channel ADC0
 }
 
-
-int main(){
+int main() {
 
 	uint32_t vBatt0, iBatt0, pBatt0, vBatt1, iBatt1, pBatt1;
 	uint32_t vBatt2, iBatt2, pBatt2, vBatt3, iBatt3, pBatt3;
 	bool battTested0, battTested1, battTested2, battTested3; //boolean for whether or not the battery has been tested
 	vBatt0 = readVoltage(0); //same for batt 1, 2, and 3
-
-
 
 }
