@@ -133,6 +133,14 @@ void Initialize_SPI_Master(void) //correct values for each register still need t
 
 }
 
+void Transmit_SPI_Master(char Data) //Function for ATMega to write data to. Must be rewritten to read data from ADC
+{
+	PORTB = 0 << CS0;			// assert the slave select
+	SPDR = Data;     			// Start transmission, send high byte first
+	while (!(SPSR & (1<<SPIF)));// Wait (poll) for transmission complete
+	PORTB = 1 << CS0;			// deassert the slave select
+}
+
 void Initialize_PWM(void) //correct values for each register still need to be determined
 		{
 	DDRD = 0xFF; 			//set port D as outputs
