@@ -117,6 +117,40 @@ void logBattery(uint8_t batt, uint32_t vBatt, uint32_t iBatt, uint32_t pBatt){ /
 	power = voltage * current;
 }
 
+void Initialize_SPI_Master(void) //correct values for each register still need to be determined
+{
+	SPCR = (0<<SPIE) | 		//No interrupts
+	(1<<SPE) | 				//SPI enabled
+	(0<<DORD) | 			//send MSB first
+	(1<<MSTR) | 			//master
+	(0<<CPOL) | 			//clock idles low
+	(0<<CPHA) | 			//sample leading edge
+	(0<<SPR1) | (0<<SPR0) ; //clock speed
+	SPSR = (0<<SPIF) | 		//SPI interrupt flag
+	(0<<WCOL) | 			//Write collision flag
+	(0<<SPI2X) ; 			//Doubles SPI clock
+	PORTB = 1 << SS;  		// make sure SS is high
+	
+}
+
+void Initialize_PWM(void) //correct values for each register still need to be determined
+{
+	DDRD = 0xFF; 			//set port D as outputs
+	TCCR0A = 0b10100011; 		//timer set to fast pwm
+	TCCR0B = 3; 			//timer clk = system clk / 64;
+	//outputs 16E6/64/255 = 980Hz PWM
+	OCR0A = 50; 			//compare value => 20% duty cycle to PD6
+	OCR0B = 191; 			//compare value => 75% duty cycle to PD5
+}
+
+void Initialize_ADC0(void) //correct values for each register still need to be determined
+{
+	ADCSRA = 0x87;	//Turn On ADC and set prescaler (CLK/128)
+	ADCSRB = 0x00;	//turn off autotrigger
+	ADMUX = 0x00;    	//Set ADC channel ADC0
+}
+
+
 int main(){
 
 	uint32_t vBatt0, iBatt0, pBatt0, vBatt1, iBatt1, pBatt1;
