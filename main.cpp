@@ -11,6 +11,28 @@
  * Date: 12/16/2016
  */
 
+#define MOSI        3
+#define MISO        4
+#define SCK         5
+#define CS0         2
+#define T_Batt_1    5
+#define T_Batt_2    4
+#define T_Batt_3    3
+#define T_Batt_4    2
+#define TX          1
+#define RX          0 
+#define CHARGE_1_1  1
+#define CHARGE_2_1  6
+#define CHARGE_EN_1 0
+#define BATT_EN_1_1 2
+#define BATT_EN_2_1 7
+#define DISC_EN_1   5
+#define CHARGE_1_2  2
+#define CHARGE_2_2  3
+#define CHARGE_EN_2 4
+#define BATT_EN_1_2 3
+#define BATT_EN_2_2 0
+#define DISC_EN_2   1
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
@@ -163,9 +185,15 @@ int main() {
 	uint32_t vBatt0, iBatt0, pBatt0, vBatt1, iBatt1, pBatt1;
 	uint32_t vBatt2, iBatt2, pBatt2, vBatt3, iBatt3, pBatt3;
 	bool battTested0, battTested1, battTested2, battTested3; //boolean for whether or not the battery has been tested
+	//Deceleration of Outputs and Inputs (Might want to double check to make sure I got it correct -Jair)
+	DDRC |=  (1<<BATT_EN_2_2) | (1<<DISC_EN_2) | (1<<BATT_END_1_1) | (1<<CHARGE_2_2) 
+	DDRD &= ~(1<<RX);
+	DDRB &= ~((1<<MISO)|(1<< PB6)|(1<< PB7));
+	//Initilization of Communication Protocols
 	Initialize_ADC0();
 	Initialize_PWM();
 	Initialize_SPI_Master();
+	
 	vBatt0 = readVoltage(0); //same for batt 1, 2, and 3
 
 }
