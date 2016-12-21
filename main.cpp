@@ -68,7 +68,7 @@
  */
 // NOTE: DISC_EN_2 and CHARGE_2_1 are swapped
 // 		 T_Batt_3 and Charge_2_2 are swapped
-//		 T_Batt_4 and  Batt_En_1_1
+//		 T_Batt_4 and  Batt_En_1_1 are swapped
 /** pin mapping on ADC:
  * Charge_Sense_1 = IN7 Current sense for charging of battery 1 and 2
  * Batt_Conn_1_1 = IN5 Voltage of battery 1
@@ -79,28 +79,28 @@
  * Batt_Conn_2_2 = IN2 Voltage of battery 4
  * I_Sense_2 = IN4  Current sense of discharging of battery 3 and 4
  */
-uint32_t readCurrent(uint8_t batt) { //batt refers to which battery to enable
-	uint32_t current;
+uint16_t readCurrent(uint8_t batt) { //batt refers to which battery to enable
+	uint16_t current;
 	//this should read the ADC
 	return current;
 }
 
-uint32_t readVoltage(uint8_t batt) { //batt refers to which battery enable
-	uint32_t voltage;
+uint16_t readVoltage(uint8_t batt) { //batt refers to which battery enable
+	uint16_t voltage;
 	return voltage;
 }
 
-uint32_t charge(uint8_t batt, uint32_t vStop, uint32_t iStop) { // batt refers to which battery to enable. vstop refers to what voltage to start checking Istop at, or when to cutoff if vstop is not 4.2V. Istop refers to what current to stop charging at
+uint32_t charge(uint8_t batt, uint16_t vStop, uint16_t iStop) { // batt refers to which battery to enable. vstop refers to what voltage to start checking Istop at, or when to cutoff if vstop is not 4.2V. Istop refers to what current to stop charging at
 	uint32_t time, stop_val;
 	if (vStop == 4.2) {
-		stop_val = iStop;
+		stop_val = iStop; // this refers to what value we should stop charging at. This does not read battery voltage, it is merely setting the stop point
 	} else {
 		stop_val = vStop + 0.5; //0.5 refers to voltage, needs to be scaled properly
 	}
 	return time;
 }
 
-uint32_t discharge15A(uint8_t batt, uint32_t vBatt, uint32_t iBatt) { //batt refers to which battery to enable
+uint32_t discharge15A(uint8_t batt, uint16_t vBatt, uint16_t iBatt) { //batt refers to which battery to enable
 
 	uint32_t;
 	return;
@@ -118,9 +118,9 @@ uint32_t discharge15A(uint8_t batt, uint32_t vBatt, uint32_t iBatt) { //batt ref
  * Also, need to figure out how to set fuse bits, and do
  * some port mapping.
  */
-uint32_t discharge30W(uint8_t batt, uint32_t vStop) { //batt refers to which battery to enable
+uint32_t discharge30W(uint8_t batt, uint16_t vStop) { //batt refers to which battery to enable
 
-	uint32_t voltage, current, disc_en;
+	uint16_t voltage, current, disc_en;
 	voltage = readVoltage(batt);
 	current = readCurrent(batt);
 
@@ -134,7 +134,7 @@ uint32_t discharge30W(uint8_t batt, uint32_t vStop) { //batt refers to which bat
 
 }
 
-void logBattery(uint8_t batt, uint32_t vBatt, uint32_t iBatt, uint32_t pBatt) { //sends data to computer via usb through ftdi chip with uart
+void logBattery(uint8_t batt, uint16_t vBatt, uint16_t iBatt, uint32_t pBatt) { //sends data to computer via usb through ftdi chip with uart
 	double voltage, current, power;
 	voltage = double(vBatt) / 4096;
 	current = double(iBatt) / 4096;
@@ -203,16 +203,20 @@ void Initialize_ADC3(void) //correct values for each register still need to be d
 	ADMUX = 0x46;    	//Set ADC channel ADC6, set compare voltage to AVcc
 }
 
+// Using UART1
+
+
 int main() {
 
-	uint32_t vBatt0, iBatt0, pBatt0, vBatt1, iBatt1, pBatt1;
-	uint32_t vBatt2, iBatt2, pBatt2, vBatt3, iBatt3, pBatt3;
+	uint16_t vBatt0, iBatt0, vBatt1, iBatt1;
+	uint16_t vBatt2, iBatt2, vBatt3, iBatt3;
+	uint32_t pBatt0, pBatt1, pBatt2, pBatt3;
 	bool battTested0, battTested1, battTested2, battTested3; //boolean for whether or not the battery has been tested
-	//Deceleration of Outputs and Inputs
+	//Declaration of Outputs and Inputs
 	DDRC |=  (1<<BATT_EN_2_2) | (1<<DISC_EN_2) | (1<<BATT_EN_1_1) | (1<<CHARGE_2_2) 
 	DDRD &= ~(1<<RX);
 	DDRB &= ~((1<<MISO)|(1<< XTAL1)|(1<< XTAL2));
-	//Initilization of Communication Protocols
+	//Initialization of Communication Protocols
 	Initialize_ADC0();
 	Initialize_PWM();
 	Initialize_SPI_Master();
