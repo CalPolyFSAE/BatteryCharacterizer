@@ -38,7 +38,8 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
-#include <avr/io.h>
+#include <avr/io.h> // avr pin mapping library
+#include <arduino/Arduino.h> // including arduino library for UART
 
 /** pin mappings on MCU:
  *
@@ -205,7 +206,11 @@ void Initialize_ADC3(void) //correct values for each register still need to be d
 
 // Using UART1
 
+void Itialize_Serial(void){ //Initializing UART1 for use
+	Serial1.begin(57600); //Arbitrarily chosen Baud Rate, still working on how to use ftdi  chip yet
+	uint32_t c = Serial1.read(); //checking if there's data already there
 
+}
 int main() {
 
 	uint16_t vBatt0, iBatt0, vBatt1, iBatt1;
@@ -213,7 +218,7 @@ int main() {
 	uint32_t pBatt0, pBatt1, pBatt2, pBatt3;
 	bool battTested0, battTested1, battTested2, battTested3; //boolean for whether or not the battery has been tested
 	//Declaration of Outputs and Inputs
-	DDRC |=  (1<<BATT_EN_2_2) | (1<<DISC_EN_2) | (1<<BATT_EN_1_1) | (1<<CHARGE_2_2) 
+	DDRC |= (1<<BATT_EN_2_2) | (1<<DISC_EN_2) | (1<<BATT_EN_1_1) | (1<<CHARGE_2_2)
 	DDRD &= ~(1<<RX);
 	DDRB &= ~((1<<MISO)|(1<< XTAL1)|(1<< XTAL2));
 	//Initialization of Communication Protocols
