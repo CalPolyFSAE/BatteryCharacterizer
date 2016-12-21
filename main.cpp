@@ -179,7 +179,28 @@ void Initialize_ADC0(void) //correct values for each register still need to be d
 		{
 	ADCSRA = 0x87;	//Turn On ADC and set prescaler (CLK/128)
 	ADCSRB = 0x00;	//turn off autotrigger
-	ADMUX = 0x00;    	//Set ADC channel ADC0
+	ADMUX = 0x45;    	//Set ADC channel ADC5, set compare voltage to AVcc
+}
+
+void Initialize_ADC1(void) //correct values for each register still need to be determined
+		{
+	ADCSRA = 0x87;	//Turn On ADC and set prescaler (CLK/128)
+	ADCSRB = 0x00;	//turn off autotrigger
+	ADMUX = 0x44;    	//Set ADC channel ADC4, set compare voltage to AVcc
+}
+
+void Initialize_ADC2(void) //correct values for each register still need to be determined
+		{
+	ADCSRA = 0x87;	//Turn On ADC and set prescaler (CLK/128)
+	ADCSRB = 0x00;	//turn off autotrigger
+	ADMUX = 0x47;    	//Set ADC channel ADC7, set compare voltage to AVcc
+}
+
+void Initialize_ADC3(void) //correct values for each register still need to be determined
+		{
+	ADCSRA = 0x87;	//Turn On ADC and set prescaler (CLK/128)
+	ADCSRB = 0x00;	//turn off autotrigger
+	ADMUX = 0x46;    	//Set ADC channel ADC6, set compare voltage to AVcc
 }
 
 int main() {
