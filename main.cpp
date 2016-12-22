@@ -11,30 +11,41 @@
  * Date: 12/16/2016
  */
 
-#define MOSI        3
-#define MISO        4
-#define SCK         5
-#define CS0         2
-#define T_Batt_1    5
-#define T_Batt_2    4
-#define T_Batt_3    3
-#define T_Batt_4    2
-#define TX          1
-#define RX          0 
-#define CHARGE_1_1  1
-#define CHARGE_2_1  6
-#define CHARGE_EN_1 0
-#define BATT_EN_1_1 2
-#define BATT_EN_2_1 7
-#define DISC_EN_1   5
-#define CHARGE_1_2  2
-#define CHARGE_2_2  3
-#define CHARGE_EN_2 4
-#define BATT_EN_1_2 3
-#define BATT_EN_2_2 0
-#define DISC_EN_2   1
-#define XTAL1       6 
-#define XTAL2       7
+#define MOSI                    3
+#define MISO                    4
+#define SCK                     5
+#define CS0                     2
+#define T_Batt_1                5
+#define T_Batt_2                4
+#define T_Batt_3                7
+#define T_Batt_4                6
+#define TX                      1
+#define RX                      0
+#define CHARGE_1_1              1
+#define CHARGE_2_1              6
+#define CHARGE_EN_1             0
+#define BATT_EN_1_1             2
+#define BATT_EN_2_1             7
+#define DISC_EN_1               5
+#define CHARGE_1_2              2
+#define CHARGE_2_2              3
+#define CHARGE_EN_2             4
+#define BATT_EN_1_2             3
+#define BATT_EN_2_2             0
+#define DISC_EN_2               1
+#define XTAL1                   6
+#define XTAL2                   7
+#define Charge_Sense_1          7
+#define Charge_Sense_2          0
+#define Batt_Conn_1_1           5
+#define Batt_Conn_2_1           6
+#define Batt_Conn_1_2           1
+#define Batt_Conn_2_2           2
+#define I_Sense_1               3
+#define I_Sense_2               4
+#define Disc_Sense_Resistance   5 //Discharge sense resistance: 0.005
+#define Charge_Sense_Resistance 5 //charge sense resistance: 0.047
+#define ADD                     3 //start position of ADC register channel select
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
@@ -80,21 +91,35 @@
  * Batt_Conn_2_2 = IN2 Voltage of battery 4
  * I_Sense_2 = IN4  Current sense of discharging of battery 3 and 4
  */
-uint16_t readCurrent(uint8_t batt) { //batt refers to which battery to enable
-	uint16_t current;
-	//this should read the ADC
+
+uint16_t read_MCU_ADC(uint8_t T_Batt){
+	uint16_t ADCvoltage;
+	ADMUX &= 11111000; //clearing mux
+	ADMUX |= T_Batt; //setting muc channel to correct pin
+	ADCSRA |= (1 << ADSC); //starting conversion
+	while (!(ADCSRA & (1 << ADIF))); //waiting until interrupt flag triggers
+	ADCSRA |= (1 << ADSC); //clearing interrupt flag(writing to flag resets flag)
+	ADCvoltage = (ADCH << 8) | ADCL; //returning ADC voltage
+
+	return ADCvoltage;
+}
+
+
+uint16_t readCurrent(uint8_t batt, uint16_t resistance) { //batt refers to which battery to enable
+	uint16_t current, voltage;
+	Transmit_SPI_Master(batt << 3); // bit shift left by 3 to move batt to the correct position in ADC register
+	current = voltage / resistance;
 	return current;
 }
 
 uint16_t readVoltage(uint8_t batt) { //batt refers to which battery enable
 	uint16_t voltage;
-	voltage = ADCH << ADCL;
-	for (i=0; )
 	return voltage;
 }
 
 uint32_t charge(uint8_t batt, uint16_t vStop, uint16_t iStop) { // batt refers to which battery to enable. vstop refers to what voltage to start checking Istop at, or when to cutoff if vstop is not 4.2V. Istop refers to what current to stop charging at
-	uint32_t time, stop_val;
+	uint16_t time, stop_val, vBatt, iBatt;
+
 	if (vStop == 4.2) {
 		stop_val = iStop; // this refers to what value we should stop charging at. This does not read battery voltage, it is merely setting the stop point
 	} else {
@@ -103,9 +128,11 @@ uint32_t charge(uint8_t batt, uint16_t vStop, uint16_t iStop) { // batt refers t
 	return time;
 }
 
-uint32_t discharge15A(uint8_t batt, uint16_t vBatt, uint16_t iBatt) { //batt refers to which battery to enable
+uint32_t discharge15A(uint8_t batt) { //batt refers to which battery to enable
 
-	uint32_t;
+	uint16_t vBatt, iBatt;
+	vBatt = readVoltage(batt);
+	iBatt = readCurrent(batt, Disc_Sense_Resistance);
 	return;
 }
 /** Needed Features/improvements
@@ -121,27 +148,22 @@ uint32_t discharge15A(uint8_t batt, uint16_t vBatt, uint16_t iBatt) { //batt ref
  * Also, need to figure out how to set fuse bits, and do
  * some port mapping.
  */
-uint32_t discharge30W(uint8_t batt, uint16_t vStop) { //batt refers to which battery to enable
+uint16_t discharge30W(uint8_t batt, uint16_t vStop) { //batt refers to which battery to enable
 
 	uint16_t voltage, current, disc_en;
-	voltage = readVoltage(batt);
-	current = readCurrent(batt);
 
 	while (voltage >= vStop) {
 		//discharge batteries
 		disc_en = 1;
 		voltage = readVoltage(batt);
-		current = readCurrent(batt);
+		current = readCurrent(batt, Disc_Sense_Resistance);
 	}
 	return;
 
 }
 
 void logBattery(uint8_t batt, uint16_t vBatt, uint16_t iBatt, uint32_t pBatt) { //sends data to computer via usb through ftdi chip with uart
-	double voltage, current, power;
-	voltage = double(vBatt) / 4096;
-	current = double(iBatt) / 4096;
-	power = voltage * current;
+
 }
 
 void Initialize_SPI_Master(void) //correct values for each register still need to be determined
@@ -156,7 +178,7 @@ void Initialize_SPI_Master(void) //correct values for each register still need t
 	SPSR = (0 << SPIF) | 		//SPI interrupt flag
 			(0 << WCOL) | 			//Write collision flag
 			(0 << SPI2X); 			//Doubles SPI clock
-	PORTB = 1 << SS;  		// make sure SS is high
+	PORTB = 1 << CS0;  		// make sure SS is high
 
 }
 
@@ -182,21 +204,13 @@ void Initialize_ADCs(void) //correct values for each register still need to be d
 		{
 	ADCSRA = 0x87;	//Turn On ADC and set prescaler (CLK/128)
 	ADCSRB = 0x00;	//turn off autotrigger
-	ADMUX = 0x45;    	//Set ADC channel ADC5(t_batt_1), set compare voltage to AVcc
+	ADMUX = 0x05;    	//Set ADC channel ADC5(t_batt_1), set compare voltage to AVcc
+	DIDR0 = (1 << T_Batt_2) | (1 << T_Batt_1); // Turning off digital input for T_Batt_1 and 2
+										 // T_Batt_3 and 4 do not require this as they are
+										 // ADC6 and ADC7
 }
 
-uint16_t read_ADC(uint8_t Batt){
-	ADMUX = 0x40 | Batt;
-	uint16_t ADCvoltage = ADCH << ADCL;
-	return ADCvoltage;
-}
-// Using UART1
 
-void Itialize_Serial(void){ //Initializing UART1 for use
-	Serial1.begin(57600); //Arbitrarily chosen Baud Rate, still working on how to use ftdi  chip yet
-	uint32_t c = Serial1.read(); //checking if there's data already there
-
-}
 int main() {
 
 	uint16_t vBatt0, iBatt0, vBatt1, iBatt1;
@@ -211,16 +225,13 @@ int main() {
 	//Initialization of Communication Protocols
 	Initialize_ADCs();
 	Initialize_PWM();
+	Serial1.begin(57600); //Initialize UART1
 	Initialize_SPI_Master();
 	
-	vBatt0 = readVoltage(0); //same for batt 1, 2, and 3
-	vBatt1 = readVoltage(1);
-	vBatt2 = readVoltage(2);
-	vBatt3 = readVoltage(3);
-	iBatt0 = readCurrent(0);
-	iBatt1 = readCurrent(1);
-	iBatt2 = readCurrent(2);
-	iBatt3 = readCurrent(3);
+	vBatt0 = readVoltage(Batt_Conn_1_1); //same for batt 1, 2, and 3
+	vBatt1 = readVoltage(Batt_Conn_2_1);
+	vBatt2 = readVoltage(Batt_Conn_1_2);
+	vBatt3 = readVoltage(Batt_Conn_2_2);
 
 	while(1){
 
