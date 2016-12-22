@@ -51,6 +51,7 @@
 #include <string.h>
 #include <avr/io.h> // avr pin mapping library
 #include <arduino/Arduino.h> // including arduino library for UART
+#include <arduino/float16.hpp> //include half precision floating points
 
 /** pin mappings on MCU:
  *
@@ -163,7 +164,9 @@ uint16_t discharge30W(uint8_t batt, uint16_t vStop) { //batt refers to which bat
 }
 
 void logBattery(uint8_t batt, uint16_t vBatt, uint16_t iBatt, uint32_t pBatt) { //sends data to computer via usb through ftdi chip with uart
+	 voltage = float(vBatt);
 
+	 float16();
 }
 
 void Initialize_SPI_Master(void) //correct values for each register still need to be determined
