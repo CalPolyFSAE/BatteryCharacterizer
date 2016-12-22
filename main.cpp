@@ -88,6 +88,8 @@ uint16_t readCurrent(uint8_t batt) { //batt refers to which battery to enable
 
 uint16_t readVoltage(uint8_t batt) { //batt refers to which battery enable
 	uint16_t voltage;
+	voltage = ADCH << ADCL;
+	for (i=0; )
 	return voltage;
 }
 
@@ -176,34 +178,18 @@ void Initialize_PWM(void) //correct values for each register still need to be de
 	OCR0B = 191; 			//compare value => 75% duty cycle to PD5
 }
 
-void Initialize_ADC0(void) //correct values for each register still need to be determined
+void Initialize_ADCs(void) //correct values for each register still need to be determined
 		{
 	ADCSRA = 0x87;	//Turn On ADC and set prescaler (CLK/128)
 	ADCSRB = 0x00;	//turn off autotrigger
-	ADMUX = 0x45;    	//Set ADC channel ADC5, set compare voltage to AVcc
+	ADMUX = 0x45;    	//Set ADC channel ADC5(t_batt_1), set compare voltage to AVcc
 }
 
-void Initialize_ADC1(void) //correct values for each register still need to be determined
-		{
-	ADCSRA = 0x87;	//Turn On ADC and set prescaler (CLK/128)
-	ADCSRB = 0x00;	//turn off autotrigger
-	ADMUX = 0x44;    	//Set ADC channel ADC4, set compare voltage to AVcc
+uint16_t read_ADC(uint8_t Batt){
+	ADMUX = 0x40 | Batt;
+	uint16_t ADCvoltage = ADCH << ADCL;
+	return ADCvoltage;
 }
-
-void Initialize_ADC2(void) //correct values for each register still need to be determined
-		{
-	ADCSRA = 0x87;	//Turn On ADC and set prescaler (CLK/128)
-	ADCSRB = 0x00;	//turn off autotrigger
-	ADMUX = 0x47;    	//Set ADC channel ADC7, set compare voltage to AVcc
-}
-
-void Initialize_ADC3(void) //correct values for each register still need to be determined
-		{
-	ADCSRA = 0x87;	//Turn On ADC and set prescaler (CLK/128)
-	ADCSRB = 0x00;	//turn off autotrigger
-	ADMUX = 0x46;    	//Set ADC channel ADC6, set compare voltage to AVcc
-}
-
 // Using UART1
 
 void Itialize_Serial(void){ //Initializing UART1 for use
@@ -216,16 +202,55 @@ int main() {
 	uint16_t vBatt0, iBatt0, vBatt1, iBatt1;
 	uint16_t vBatt2, iBatt2, vBatt3, iBatt3;
 	uint32_t pBatt0, pBatt1, pBatt2, pBatt3;
-	bool battTested0, battTested1, battTested2, battTested3; //boolean for whether or not the battery has been tested
+	bool battTested0 = 0, battTested1 = 0, battTested2 = 0, battTested3 = 0; //boolean for whether or not the battery has been tested
+
 	//Declaration of Outputs and Inputs
-	DDRC |= (1<<BATT_EN_2_2) | (1<<DISC_EN_2) | (1<<BATT_EN_1_1) | (1<<CHARGE_2_2)
+	DDRC |= (1<<BATT_EN_2_2) | (1<<DISC_EN_2) | (1<<BATT_EN_1_1) | (1<<CHARGE_2_2);
 	DDRD &= ~(1<<RX);
 	DDRB &= ~((1<<MISO)|(1<< XTAL1)|(1<< XTAL2));
 	//Initialization of Communication Protocols
-	Initialize_ADC0();
+	Initialize_ADCs();
 	Initialize_PWM();
 	Initialize_SPI_Master();
 	
 	vBatt0 = readVoltage(0); //same for batt 1, 2, and 3
+	vBatt1 = readVoltage(1);
+	vBatt2 = readVoltage(2);
+	vBatt3 = readVoltage(3);
+	iBatt0 = readCurrent(0);
+	iBatt1 = readCurrent(1);
+	iBatt2 = readCurrent(2);
+	iBatt3 = readCurrent(3);
 
+	while(1){
+
+		if (battTested0){ //
+			vBatt0 = readVoltage(0);
+			iBatt0 = readCurrent(0);
+			if()
+		}
+
+		else if (battTested1){
+			vBatt1 = readVoltage(1);
+			iBatt1 = readCurrent(1);
+		}
+
+		else{
+
+		}
+
+		if (battTested2){
+			vBatt2 = readVoltage(2);
+			iBatt2 = readCurrent(2);
+		}
+
+		else if (battTested3){
+			vBatt3 = readVoltage(3);
+			iBatt3 = readCurrent(3);
+		}
+
+		else{
+
+		}
+	}
 }
