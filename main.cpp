@@ -32,7 +32,7 @@
 #define CHARGE_EN_2             4
 #define BATT_EN_1_2             3
 #define BATT_EN_2_2             0
-#define DISC_EN_2               1
+#define DISC_EN_2               6
 #define XTAL1                   6
 #define XTAL2                   7
 #define Charge_Sense_1          7
@@ -46,6 +46,10 @@
 #define Disc_Sense_Resistance   5 //Discharge sense resistance: 0.005
 #define Charge_Sense_Resistance 5 //charge sense resistance: 0.047
 #define ADD                     3 //start position of ADC register channel select
+#define vRef                    5 // reference voltage
+#define rThermistor25			10000 // thermistor resistance at 25C
+#define rSeries					10000 // series resistor
+#define bThermistor				3971 //beta value of thermistor
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
@@ -76,7 +80,7 @@
  * CHARGE_EN_2 = PD4 same as Charge_En_1, but for battery 3 and 4
  * BATT_EN_1_2 = PD3 same as batt_en_1_1 but for battery 3
  * BATT_EN_2_2 = PC0 same as batt_en_1_1, but for battery 4
- * DISC_EN_2 = PC1 jumper wire to PD6 same as disc_en_2 but for battery 3 and 4
+ * DISC_EN_2 = PC1 jumper wire to PD6 same as disc_en_1 but for battery 3 and 4
  *
  */
 // NOTE: DISC_EN_2 and CHARGE_2_1 are swapped
@@ -93,16 +97,30 @@
  * I_Sense_2 = IN4  Current sense of discharging of battery 3 and 4
  */
 
-uint16_t read_MCU_ADC(uint8_t T_Batt){
-	uint16_t ADCvoltage;
-	ADMUX &= 11111000; //clearing mux
-	ADMUX |= T_Batt; //setting muc channel to correct pin
-	ADCSRA |= (1 << ADSC); //starting conversion
-	while (!(ADCSRA & (1 << ADIF))); //waiting until interrupt flag triggers
-	ADCSRA |= (1 << ADSC); //clearing interrupt flag(writing to flag resets flag)
-	ADCvoltage = (ADCH << 8) | ADCL; //returning ADC voltage
+//uint16_t read_MCU_ADC(uint8_t T_Batt){
+//	uint16_t ADCvoltage;
+//	ADMUX &= 11111000; //clearing mux
+//	ADMUX |= T_Batt; //setting muc channel to correct pin
+//	ADCSRA |= (1 << ADSC); //starting conversion
+//	while (!(ADCSRA & (1 << ADIF))); //waiting until interrupt flag triggers
+//	ADCSRA |= (1 << ADSC); //clearing interrupt flag(writing to flag resets flag)
+//	ADCvoltage = (ADCH << 8) | ADCL; //returning ADC voltage
+//
+//	return ADCvoltage;
+//}
 
-	return ADCvoltage;
+uint16_t readBattTemp(uint8_t Batt){
+	uint16_t vThermistor = analogRead(Batt);
+	return rSeries * ((vRef / vThermistor) - 1); //returning resistance of Thermistor
+												 //not returning temperature since requires float math
+												 //will calculate actual temperature during logging
+}
+void Transmit_SPI_Master(char Data) //Function for ATMega to write data to. Must be rewritten to read data from ADC
+{
+	PORTB = 0 << CS0;			// assert the slave select
+	SPDR = Data;     			// Start transmission, send high byte first
+	while (!(SPSR & (1<<SPIF)));// Wait (poll) for transmission complete
+	PORTB = 1 << CS0;			// deassert the slave select
 }
 
 
@@ -149,6 +167,9 @@ uint32_t discharge15A(uint8_t batt) { //batt refers to which battery to enable
  * Also, need to figure out how to set fuse bits, and do
  * some port mapping.
  */
+void discharge(uint8_t dutyCycle, uint8_t channel){
+
+}
 uint16_t discharge30W(uint8_t batt, uint16_t vStop) { //batt refers to which battery to enable
 
 	uint16_t voltage, current, disc_en;
@@ -163,10 +184,13 @@ uint16_t discharge30W(uint8_t batt, uint16_t vStop) { //batt refers to which bat
 
 }
 
-void logBattery(uint8_t batt, uint16_t vBatt, uint16_t iBatt, uint32_t pBatt) { //sends data to computer via usb through ftdi chip with uart
-	 voltage = float(vBatt);
-
-	 float16();
+void logBattery(uint8_t batt, uint16_t vBatt, uint16_t iBatt) { //sends data to computer via usb through ftdi chip with uart
+	 uint16_t voltage, current;
+	 float16(&voltage, float(vBatt));
+	 float16(&current, float(iBatt));
+	 voltage *= 5 / 4096;
+	 current *= 5 / 4096;
+	 uint16_t power = voltage * current;
 }
 
 void Initialize_SPI_Master(void) //correct values for each register still need to be determined
@@ -185,17 +209,10 @@ void Initialize_SPI_Master(void) //correct values for each register still need t
 
 }
 
-void Transmit_SPI_Master(char Data) //Function for ATMega to write data to. Must be rewritten to read data from ADC
-{
-	PORTB = 0 << CS0;			// assert the slave select
-	SPDR = Data;     			// Start transmission, send high byte first
-	while (!(SPSR & (1<<SPIF)));// Wait (poll) for transmission complete
-	PORTB = 1 << CS0;			// deassert the slave select
-}
 
 void Initialize_PWM(void) //correct values for each register still need to be determined
 		{
-	DDRD = 0xFF; 			//set port D as outputs
+	DDRD |= (1 << DISC_EN_1) | (1 << DISC_EN_2); 			//enables PWM pins
 	TCCR0A = 0b10100011; 		//timer set to fast pwm
 	TCCR0B = 3; 			//timer clk = system clk / 64;
 	//outputs 16E6/64/255 = 980Hz PWM
@@ -216,7 +233,7 @@ void Initialize_ADCs(void) //correct values for each register still need to be d
 
 int main() {
 
-	uint16_t vBatt0, iBatt0, vBatt1, iBatt1;
+	uint16_t vBatt0, iBatt0, vBatt1, iBatt1, tBatt0, tBatt1, tBatt2, tBatt3;
 	uint16_t vBatt2, iBatt2, vBatt3, iBatt3;
 	uint32_t pBatt0, pBatt1, pBatt2, pBatt3;
 	bool battTested0 = 0, battTested1 = 0, battTested2 = 0, battTested3 = 0; //boolean for whether or not the battery has been tested
@@ -235,16 +252,19 @@ int main() {
 	vBatt1 = readVoltage(Batt_Conn_2_1);
 	vBatt2 = readVoltage(Batt_Conn_1_2);
 	vBatt3 = readVoltage(Batt_Conn_2_2);
-
+	tBatt0 = readBattTemp(T_Batt_1);
+	tBatt1 = readBattTemp(T_Batt_2);
+	tBatt2 = readBattTemp(T_Batt_3);
+	tBatt3 = readBattTemp(T_Batt_4);
 	while(1){
 
-		if (battTested0){ //
+		if (!battTested0){ //
 			vBatt0 = readVoltage(0);
 			iBatt0 = readCurrent(0);
 			if()
 		}
 
-		else if (battTested1){
+		else if (!battTested1){
 			vBatt1 = readVoltage(1);
 			iBatt1 = readCurrent(1);
 		}
@@ -253,12 +273,12 @@ int main() {
 
 		}
 
-		if (battTested2){
+		if (!battTested2){
 			vBatt2 = readVoltage(2);
 			iBatt2 = readCurrent(2);
 		}
 
-		else if (battTested3){
+		else if (!battTested3){
 			vBatt3 = readVoltage(3);
 			iBatt3 = readCurrent(3);
 		}
