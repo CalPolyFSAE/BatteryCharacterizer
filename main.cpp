@@ -56,6 +56,7 @@
 #include <avr/io.h> // avr pin mapping library
 #include <arduino/Arduino.h> // including arduino library for UART
 #include <arduino/float16.hpp> //include half precision floating points
+#include "arduino/SPI.h"
 
 /** pin mappings on MCU:
  *
@@ -115,30 +116,24 @@ uint16_t readBattTemp(uint8_t Batt){
 												 //not returning temperature since requires float math
 												 //will calculate actual temperature during logging
 }
-void Transmit_SPI_Master(char Data) //Function for ATMega to write data to. Must be rewritten to read data from ADC
-{
-	PORTB = 0 << CS0;			// assert the slave select
-	SPDR = Data;     			// Start transmission, send high byte first
-	while (!(SPSR & (1<<SPIF)));// Wait (poll) for transmission complete
-	PORTB = 1 << CS0;			// deassert the slave select
-}
+//Couldn't find SPI function in AVR Library, will add function later
 
 
-uint16_t readCurrent(uint8_t batt, uint16_t resistance) { //batt refers to which battery to enable
+uint16_t readCurrent(uint8_t Batt, uint16_t resistance) { //batt refers to which battery to enable
 	uint16_t current, voltage;
-	Transmit_SPI_Master(batt << 3); // bit shift left by 3 to move batt to the correct position in ADC register
+	voltage = Transmit_SPI_Master_16(Batt << 3, 0); // bit shift left by 3 to move batt to the correct position in ADC register
 	current = voltage / resistance;
 	return current;
 }
 
-uint16_t readVoltage(uint8_t batt) { //batt refers to which battery enable
-	uint16_t voltage;
+uint16_t readVoltage(uint8_t Batt) { //batt refers to which battery enable
+	uint16_t voltage = Transmit_SPI_Master_16(Batt << 3, 0);
+	voltage *= 16; // precalculated: (2 ** 16) / (2 **12) -- map to 16 bit
 	return voltage;
 }
 
-uint32_t charge(uint8_t batt, uint16_t vStop, uint16_t iStop) { // batt refers to which battery to enable. vstop refers to what voltage to start checking Istop at, or when to cutoff if vstop is not 4.2V. Istop refers to what current to stop charging at
+uint32_t charge(uint8_t Batt, uint16_t vStop, uint16_t iStop) { // batt refers to which battery to enable. vstop refers to what voltage to start checking Istop at, or when to cutoff if vstop is not 4.2V. Istop refers to what current to stop charging at
 	uint16_t time, stop_val, vBatt, iBatt;
-
 	if (vStop == 4.2) {
 		stop_val = iStop; // this refers to what value we should stop charging at. This does not read battery voltage, it is merely setting the stop point
 	} else {
@@ -147,12 +142,28 @@ uint32_t charge(uint8_t batt, uint16_t vStop, uint16_t iStop) { // batt refers t
 	return time;
 }
 
-uint32_t discharge15A(uint8_t batt) { //batt refers to which battery to enable
-
+uint32_t discharge15A(uint8_t Batt, uint32_t time) { //batt refers to which battery to enable
+	//not sure what data size time should be yet
+	// chosen resistor may not be low enough to handle 15A CC discharge
+	// if so, will switch to 10A
 	uint16_t vBatt, iBatt;
-	vBatt = readVoltage(batt);
-	iBatt = readCurrent(batt, Disc_Sense_Resistance);
-	return;
+	uint8_t duty_cycle = 0;
+	vBatt = readVoltage(Batt);
+	iBatt = readCurrent(Batt, Disc_Sense_Resistance);
+	while ((time < 5) and (vBatt > 2.8)) { //time needs to be scaled voltage also
+		if (iBatt < 15){ //need to scale current
+			duty_cycle ++;
+		}
+		else if (iBatt > 15){
+			duty_cycle --;
+		}
+		if (vBatt <= 2.8){
+			duty_cycle = 0;
+		}
+		analogWrite(Batt, duty_cycle);
+	}
+
+	return 0;
 }
 /** Needed Features/improvements
  * Might want to change the discharge functions so
@@ -167,20 +178,26 @@ uint32_t discharge15A(uint8_t batt) { //batt refers to which battery to enable
  * Also, need to figure out how to set fuse bits, and do
  * some port mapping.
  */
-void discharge(uint8_t dutyCycle, uint8_t channel){
 
-}
-uint16_t discharge30W(uint8_t batt, uint16_t vStop) { //batt refers to which battery to enable
+uint16_t discharge30W(uint8_t Batt, uint16_t vStop) { //batt refers to which battery to enable
 
-	uint16_t voltage, current, disc_en;
-
+	uint16_t voltage, current, disc_en, power;
+	uint8_t duty_cycle;
 	while (voltage >= vStop) {
 		//discharge batteries
 		disc_en = 1;
-		voltage = readVoltage(batt);
-		current = readCurrent(batt, Disc_Sense_Resistance);
+		voltage = readVoltage(Batt);
+		current = readCurrent(Batt, Disc_Sense_Resistance);
+		power = voltage * current;
+		if(power < 30){ //scale this value properly
+			duty_cycle ++;
+		}
+		else if (power > 30) { //very simple P loop
+			duty_cycle --;
+		}
+		analogWrite(Batt, duty_cycle);
 	}
-	return;
+	return 0;
 
 }
 
@@ -193,21 +210,7 @@ void logBattery(uint8_t batt, uint16_t vBatt, uint16_t iBatt) { //sends data to 
 	 uint16_t power = voltage * current;
 }
 
-void Initialize_SPI_Master(void) //correct values for each register still need to be determined
-		{
-	SPCR = (0 << SPIE) | 		//No interrupts
-			(1 << SPE) | 				//SPI enabled
-			(0 << DORD) | 			//send MSB first
-			(1 << MSTR) | 			//master
-			(0 << CPOL) | 			//clock idles low
-			(0 << CPHA) | 			//sample leading edge
-			(0 << SPR1) | (0 << SPR0); //clock speed
-	SPSR = (0 << SPIF) | 		//SPI interrupt flag
-			(0 << WCOL) | 			//Write collision flag
-			(0 << SPI2X); 			//Doubles SPI clock
-	PORTB = 1 << CS0;  		// make sure SS is high
 
-}
 
 
 void Initialize_PWM(void) //correct values for each register still need to be determined
@@ -216,8 +219,8 @@ void Initialize_PWM(void) //correct values for each register still need to be de
 	TCCR0A = 0b10100011; 		//timer set to fast pwm
 	TCCR0B = 3; 			//timer clk = system clk / 64;
 	//outputs 16E6/64/255 = 980Hz PWM
-	OCR0A = 50; 			//compare value => 20% duty cycle to PD6
-	OCR0B = 191; 			//compare value => 75% duty cycle to PD5
+//	OCR0A = 50; 			//compare value => 20% duty cycle to PD6
+//	OCR0B = 191; 			//compare value => 75% duty cycle to PD5
 }
 
 void Initialize_ADCs(void) //correct values for each register still need to be determined
