@@ -14,10 +14,11 @@
 #include <stdio.h>
 #include <string.h>
 #include <avr/io.h> // avr pin mapping library
+#include <avr/interrupt.h> //include interrupt abilities
 #include <arduino/float16.hpp> //include half precision floating points
 #include <arduino/SPI.h>
 #include <arduino/HardwareSerial.cpp>
-//#include <arduino/wiring_analog.c>
+#include <PWM.hpp>
 
 const uint8_t MOSI = 3;
 const uint8_t MISO = 4;
@@ -54,13 +55,22 @@ const float rinf = rThermistor25 * pow(e, (-bThermistor / 25));
 #define I_Sense_2               4
 #define Disc_Sense_Resistance   5 //Discharge sense resistance: 0.005
 #define Charge_Sense_Resistance 5 //charge sense resistance: 0.047
-#define ADD                     3 //start position of ADC register channel select
 #define vRef                    5 // reference voltage
 #define rThermistor25			10000 // thermistor resistance at 25C
 #define rSeries					10000 // series resistor
 #define bThermistor				3971 //beta value of thermistor
 #define RoomTemp                25
-
+#define maxVoltage              5
+#define CEILING16B				65535 //max number of 16 bit number
+#define CEILING12B				4095 //See Above
+#define CEILING10B				1023 //See Above
+#define CEILING8B				255 //See Above
+#define OVERCHARGEVOLTAGE		(CEILING10B / vRef) * 0.5 //10B representation of 0.5V
+														  //voltage to overcharge to when targetting a voltage less than 4.2
+														  //hopefully this will make an uint16_t num, but unsure
+#define SETCURRENT				// come up with an equation here: set current is 10A
+volatile uint16_t ClkCounter; //define a counter
+volatile uint32_t GblClk; //global clock
 /** pin mappings on MCU:
  *
  * T_Batt_1 = PC5 Temp for battery 1
@@ -112,13 +122,19 @@ const float rinf = rThermistor25 * pow(e, (-bThermistor / 25));
 //
 //	return ADCvoltage;
 //}
+
+/** More notes:
+ * also convert timing math to be
+ */
+
 uint16_t readBattTemp(uint8_t Batt) {
 	uint16_t vThermistor;
 	vThermistor = analogRead(Batt);
 	return rSeries * ((vRef / vThermistor) - 1); //returning resistance of Thermistor
 												 //not returning temperature since requires float math
-												 //will calculate actual temperature during logging
+										 //will calculate actual temperature during logging
 }
+
 uint16_t readCurrent(uint8_t Batt, uint16_t resistance) { //batt refers to which battery to enable
 	uint16_t current, voltage;
 	voltage = Transmit_SPI_Master_16(Batt << 3, 0, CS0); // bit shift left by 3 to move batt to the correct position in ADC register
@@ -126,39 +142,11 @@ uint16_t readCurrent(uint8_t Batt, uint16_t resistance) { //batt refers to which
 	return current;
 }
 
-void setDutyCycle(uint8_t Channel, uint16_t duty_cycle) { //this function exists because analogWrite doesn't use OCR0x register. Or at least it doesn't look like it
-
-	if (Channel == 5) {
-
-		OCR0A = duty_cycle;
-	}
-
-	else if (Channel == 6) {
-
-		OCR0B = duty_cycle;
-	}
-
-}
-
-void turnOffPWM(uint8_t Channel) {
-
-	if (Channel == PD5) {
-
-		OCR0A = 0; //set duty cycle to 0
-		TCCR0A &= ~((1 << COM0A1) | (1 << COM0A0)); //disable OCR0A
-	}
-
-	else if (Channel == PD6) {
-
-		OCR0B = 0;
-		TCCR0A &= ~((1 << COM0B1) | (1 << COM0B0)); //See Above comments
-	}
-}
-
 uint16_t readVoltage(uint8_t Batt) { //batt refers to which battery enable
 
-	uint16_t voltage = Transmit_SPI_Master_16(Batt << 3, 0, CS0);
-	voltage *= 16; // precalculated: (2 ** 16) / (2 **12) -- map to 16 bit
+	uint16_t voltage;
+	voltage = Transmit_SPI_Master_16(Batt << 3, 0, CS0);
+	voltage *= CEILING16B / CEILING12B; //map to 16 bit
 	return voltage;
 }
 
@@ -167,39 +155,91 @@ uint32_t charge(uint8_t Batt, uint16_t vStop, uint16_t iStop,
 
 	uint16_t time, stop_val, vBatt, iBatt, prevTime;
 	time = prevElapsedTime;
+	if(Batt == 0){
+		turnOffPWM(DISC_EN_1); // turn off PWM first
+		PORTB |= (1 << CHARGE_EN_1) | (1 << CHARGE_1_1); //enable charger and charging mosfet
+		PORTC &= ~(1 << CHARGE_2_1); //make sure not charging two batteries at once(could lead to short between batteries
+		PORTC |= (1 << BATT_EN_1_1); //open connection to battery
+									 //two separate battery enables to take advantage of body diodes, see EAGLE schematic
+
+	}
+
+	else if (Batt == 1){
+		//same as above
+		turnOffPWM(DISC_EN_1);
+		PORTB |= (1 << CHARGE_EN_1);
+		PORTB &= ~(1 << CHARGE_1_1);
+		PORTC |= (1 << CHARGE_2_1);
+		PORTD |= (1 << BATT_EN_2_1);
+
+
+	}
+
+	else if (Batt == 2){
+		//same as above
+		turnOffPWM(DISC_EN_2);
+		PORTD |= (1 << CHARGE_EN_2) | (1 << CHARGE_1_2) | (1 << BATT_EN_1_2);
+		PORTC &= ~(1 << CHARGE_2_2);
+
+	}
+
+	else if(Batt == 3){
+		//same as above
+		turnOffPWM(DISC_EN_2);
+		PORTD |= (1 << CHARGE_EN_2);
+		PORTC |= (1 << CHARGE_2_2) | (1 << BATT_EN_2_2);
+		PORTD &= ~(1 << CHARGE_1_2);
+
+
+	}
+
+	if (vStop == 4.2) {
+		stop_val = iStop; // this refers to what value we should stop charging at. This does not read battery voltage, it is merely setting the stop point
+	} else {
+		stop_val = vStop + OVERCHARGEVOLTAGE; //0.5 refers to voltage, needs to be scaled properly
+	}
+	//start charging
 	while (time < 5) {
 		prevTime = TCNT1;
-		if (vStop == 4.2) {
-			stop_val = iStop; // this refers to what value we should stop charging at. This does not read battery voltage, it is merely setting the stop point
-		} else {
-			stop_val = vStop + 0.5; //0.5 refers to voltage, needs to be scaled properly
-		}
+
 		time += (TCNT1 - prevTime);
+		vBatt = readVoltage(Batt);
+		if(vBatt >= stop_val){
+			//stop charging
+		}
 	}
+	//need to return bool of charge being done
 	return time;
 }
 
-uint16_t discharge10A(uint8_t Batt, uint16_t discTime) { //batt refers to which battery to enable
+uint16_t discharge10A(uint8_t Batt, uint16_t discTime, uint16_t duty_cycle) { //batt refers to which battery to enable
 //not sure what data size time should be yet
 // chosen resistor may not be low enough to handle 15A CC discharge
 // if so, will switch to 10A
 	uint16_t vBatt, iBatt, Time, prevTime;
-	uint8_t duty_cycle = 0;
+	enablePWM(Batt);
 	vBatt = readVoltage(Batt);
 	iBatt = readCurrent(Batt, Disc_Sense_Resistance);
 	Time = discTime;
+
 	while (Time < 5) { //time needs to be scaled voltage also
 		prevTime = TCNT1; //counter register
-		if (vBatt == 2.8) { //exit CC discharge if voltage gets too low
+		vBatt = readVoltage(Batt);
+		iBatt = readCurrent(Batt, Disc_Sense_Resistance);
+		if (vBatt <= 2.8) { //exit CC discharge if voltage gets too low
 			return NULL;
 		}
+
 		if (iBatt < 10) { //need to scale current
 			duty_cycle++;
-		} else if (iBatt > 10) {
+		}
+		else if (iBatt > 10) {
 			duty_cycle--;
 		}
+
 		if (vBatt <= 2.8) {
 			duty_cycle = 0;
+
 		}
 		setDutyCycle(Batt, duty_cycle);
 		Time += (TCNT1 - prevTime); //need to account for overflow
@@ -211,6 +251,7 @@ uint16_t discharge30W(uint8_t Batt, uint16_t vStop, uint16_t prevElapsedTime) { 
 
 	uint16_t voltage, current, disc_en, power, elapsedTime, prevTime;
 	uint8_t duty_cycle;
+	enablePWM(Batt);
 	prevTime = TCNT1; //counter register
 	while ((voltage >= vStop) && (Time < 5)) {
 		//discharge batteries
@@ -218,6 +259,7 @@ uint16_t discharge30W(uint8_t Batt, uint16_t vStop, uint16_t prevElapsedTime) { 
 		voltage = readVoltage(Batt);
 		current = readCurrent(Batt, Disc_Sense_Resistance);
 		power = voltage * current;
+
 		if (power < 30) { //scale this value properly
 			duty_cycle++;
 		} else if (power > 30) { //very simple P loop
@@ -229,18 +271,20 @@ uint16_t discharge30W(uint8_t Batt, uint16_t vStop, uint16_t prevElapsedTime) { 
 	return elapsedTime;
 
 }
+
 uint16_t calcThermTemp(uint16_t rThermistor) {
 	float tThermistor;
 	tThermistor = bThermistor / (log(rThermistor / rinf)); //need math.h and a way to calculate rInf automatically
 	return tThermistor;
 
 }
-void logBattery(uint8_t batt, uint16_t vBatt, uint16_t iBatt) { //sends data to computer via usb through ftdi chip with uart
-	uint16_t voltage, current;
-	float16(&voltage, float(vBatt));
-	float16(&current, float(iBatt));
-	voltage *= 5 / 4096;
-	current *= 5 / 4096;
+
+
+void logBattery(uint8_t batt, uint16_t vBatt, uint16_t iBatt, uint16_t tBatt) { //sends data to computer via usb through ftdi chip with uart
+	uint16_t voltage, current, temperature;
+	float16(&voltage, (float(vBatt) * 5 / 4096));
+	float16(&current, (float(iBatt) * 5 / 4096));
+	float16(&temperature, float(calcThermTemp(tBatt)));
 	uint16_t power = voltage * current;
 	Serial1.write(voltage); //this is wrong, but need to get the point accross
 }
@@ -263,6 +307,35 @@ void Initialize_ADCs(void) //correct values for each register still need to be d
 // ADC6 and ADC7
 }
 
+void configureGblClk(void){ //This function will set up the global clock
+
+	TCCR2A = 0x02; //set counter2 as normal timer
+	TCCR2B = 0x07; //set prescaler for clk/1024
+	TIMSK2 = 0x01; //set interrupt on overflow
+
+}
+
+void runforsometime(void){ //this is not a function, but a description of code to be inserted elsewhere
+	clear counter2
+	uint8_t randomvar, time;
+	while((randomvar != time))){ //need to check for longer 980Hz
+		//somecode				 //980Hz / 4 should be good
+		clearcounter
+		while(counteroverflowflag); //similar to delay function
+		randomvar ++;
+	}
+}
+
+ISR(TOV2_vect){ //I'm not sure if this is how this works
+	//this functions works as a one second timer that causes the program to log data once a second
+	//considering not making this an interrupt since it might mess up SPI
+	ClkCounter ++;
+	if (ClkCounter == somenum){ //set this to be whatever it needs to be 1s
+		ClkCounter = 0; //reset counter
+		GblClk ++; //one second has passed so add some time
+		logBattery(some globals); //would like a clever way to log data here
+	}
+}
 /** Needed Features/improvements
  * Might want to change the discharge functions so
  * we only have 1 function with a 30A CC and 30W CP
@@ -294,6 +367,9 @@ int main() {
 	Initialize_PWM();
 	Serial1.begin(57600); //Initialize UART1
 	Initialize_SPI_Master(CS0);
+//set up 1 second clock
+	configureGblClk();
+	sei(); //enable gbl interrupts
 
 	vBatt0 = readVoltage(Batt_Conn_1_1); //same for batt 1, 2, and 3
 	vBatt1 = readVoltage(Batt_Conn_2_1);
