@@ -126,10 +126,10 @@ const float rinf = rThermistor25 * exp((-bThermistor / 25)); //this is a constan
  */
 
 //Begin Global Variables
-//I was told that globals are good in MCU programming for some reason, if not, I can make then no global
-volatile uint16_t ClkCounter; //define a counter
+
 volatile uint32_t GblClk; //global clock
-//status register for batteries
+
+//status register for batteries, global so that it can be read by the logging ISR
 volatile uint8_t Batt0Status, Batt1Status, Batt2Status, Batt3Status;
 #define WAITING		0 //waiting for counterpart battery
 #define CHARGING	1 //charging to 4.2V or storage voltage
@@ -140,6 +140,9 @@ volatile uint8_t Batt0Status, Batt1Status, Batt2Status, Batt3Status;
 #define CPDONE		6 //finished constant power discharge
 #define ALLDONE		7 //finished all tests and charge to storage voltage
 //end status register
+
+//Boolean as to whether or not to log data
+volatile bool LogData;
 //End Global Variables
 
 //Begin Function Definitions
@@ -166,30 +169,29 @@ void Waitfor(uint8_t millis)
 	}
 }
 
-void readBattTemp(uint32_t *rTherm, uint8_t Batt)
+uint32_t readBattTemp(uint8_t Batt)
 {
 	uint32_t vThermistor;
 	vThermistor = (analogRead(Batt) * vRef2FixedPoint) / MAX12B; //may need to ditch analogRead, also converting to Fixed math with 2 decimal points
-	*rTherm = (((rSeriesFixedPoint * vRef2FixedPoint) / vThermistor)
-			- rSeriesFixedPoint); //returning resistance of Thermistor
+	return (((rSeriesFixedPoint * vRef2FixedPoint) / vThermistor) - rSeriesFixedPoint); //returning resistance of Thermistor
 }
 
-void readCurrent(uint32_t * iBatt, uint8_t Batt, uint32_t resistance)
+uint32_t readCurrent(uint8_t Batt, uint32_t resistance)
 { //batt refers to which battery to enable
 	uint32_t vBatt;
 	vBatt = Transmit_SPI_Master_16(Batt << 3, 0, CS0); // bit shift left by 3 to move batt to the correct position in ADC register
 	vBatt = (vBatt * vRef3FixedPoint) / MAX12B; //convert to fixed point 3 decimal places
-	*iBatt = (vBatt / resistance) * 1000; //resistance must  be in 3 point fixed decimal or it won't work right
+	return (vBatt / resistance) * 1000; //resistance must  be in 3 point fixed decimal or it won't work right
 										  // multiplying by 1000 because  if both are in 3point fixed, then it stops being in 3 point fixed
 										  // can probably be fixed by creating a type that has the correct math, but that's beyond my skill level
 										  // and this needs to be done asap
 }
 
-void readVoltage(uint32_t * vBatt, uint8_t Batt)
+uint32_t readVoltage(uint8_t Batt)
 { //batt refers to which battery enable
 
-	*vBatt = Transmit_SPI_Master_16(Batt << 3, 0, CS0);
-	*vBatt = (*vBatt * vRef3FixedPoint) / MAX12B; //scaled to 3 decimal place fixed point. Don't need any more decimal places because
+	uint32_t vBatt = Transmit_SPI_Master_16(Batt << 3, 0, CS0);
+	return (vBatt * vRef3FixedPoint) / MAX12B; //scaled to 3 decimal place fixed point. Don't need any more decimal places because
 	//^is this okay?					 // 12B can't do better than 1 mV, so just wasting it anyways
 }
 
@@ -207,7 +209,7 @@ void readVoltage(uint32_t * vBatt, uint8_t Batt)
  */
 
 void charge(uint8_t Batt, uint16_t vStop, uint16_t iStop,
-		uint8_t * BattStatusPtr)
+		uint8_t BattStatus)
 { // batt refers to which battery to enable. vstop refers to what voltage to start checking Istop at, or when to cutoff if vstop is not 4.2V. Istop refers to what current to stop charging at
 //BattStatusPtr, points to the status register of the specific battery
 	uint32_t vBatt, iBatt;
@@ -251,14 +253,14 @@ void charge(uint8_t Batt, uint16_t vStop, uint16_t iStop,
 	}
 	//start charging
 	Waitfor(2); //wait for 2ms
-	readVoltage(&vBatt, Batt);
+	vBatt = readVoltage(Batt);
 	if ((vBatt >= vStop + OVERCHARGEVOLTAGE) && (vStop != 4200)) //when vBatt is above
 	{
-		*BattStatusPtr |= (1 << FULLCHARGED);
+		BattStatus |= (1 << FULLCHARGED);
 	}
 	else if (iBatt <= iStop)
 	{
-		*BattStatusPtr |= (1 << ALLDONE); //if it makes it here, then the battery is done charging.
+		BattStatus |= (1 << ALLDONE); //if it makes it here, then the battery is done charging.
 		//A battery must have been CC and CP discharges and recharged to a storage voltage
 	}
 //need to return bool of charge being done
@@ -274,24 +276,24 @@ void discharge10A(uint8_t Batt, uint8_t duty_cycle, uint8_t vChannel,
 // if so, will switch to 10A
 
 	enablePWM(Batt); //make pwm is always enable, in case just got out of charging
-	readVoltage(vBatt_ptr, vChannel);
-	readCurrent(iBatt_ptr, iChannel, Disc_Sense_Resistance);
+	uint32_t vBatt = readVoltage(vChannel);
+	uint32_t iBatt = readCurrent(iChannel, Disc_Sense_Resistance);
 
 	for (uint8_t i = 0; i < 4; i++)
 	{ //this number needs to be decided
-		readVoltage(vBatt_ptr, vChannel);
-		readCurrent(iBatt_ptr, iChannel, Disc_Sense_Resistance);
-		if (*vBatt_ptr <= 2800)
+		vBatt = readVoltage(vChannel);
+		iBatt = readCurrent(iChannel, Disc_Sense_Resistance);
+		if (vBatt <= 2800)
 		{ //exit CC discharge if voltage gets too low. Cutoff is 2.8V
 			duty_cycle = 0;
 			break;
 		}
 
-		else if (*iBatt_ptr < 10000)
+		else if (iBatt < 10000)
 		{ //10A in 3 point fixed decimal, can be subbed with a variable if needed
 			duty_cycle += 5; //magic number controlling how much change to the duty cycle is going to be needed
 		}
-		else if (*iBatt_ptr > 10000)
+		else if (iBatt > 10000)
 		{
 			duty_cycle -= 5; //see above
 		}
@@ -302,12 +304,13 @@ void discharge10A(uint8_t Batt, uint8_t duty_cycle, uint8_t vChannel,
 
 }
 
-uint16_t discharge30W(uint32_t * vBattPtr, uint32_t * iBattPtr, uint8_t Batt, uint16_t vStop, uint8_t * statusReg)
+uint16_t discharge30W(uint8_t Batt, uint16_t vStop, uint8_t * statusReg)
 { //batt refers to which battery to enable
 
 	uint32_t disc_en, power;
+	uint32_t vBatt = readVoltage(Batt), iBatt = readCurrent(Batt, Disc_Sense_Resistance)l;
 	uint8_t duty_cycle;
-	if (*vBattPtr <= vStop)
+	if (vBatt <= vStop)
 	{
 		turnOffPWM(Batt); //turnoff pwm if done
 		*statusReg |= (1 << CPDONE); // can I do this??? trying to edit a register given to me in the function
@@ -318,9 +321,9 @@ uint16_t discharge30W(uint32_t * vBattPtr, uint32_t * iBattPtr, uint8_t Batt, ui
 		for (uint8_t i = 0; i < 4; i++)
 		{		//discharge batteries
 			disc_en = 1;
-			readVoltage(vBattPtr, Batt);
-			readCurrent(iBattPtr, Batt, Disc_Sense_Resistance);
-			power = (*vBattPtr * *iBattPtr) / 1000; //divided by 1000 to prevent it from being 6 point fixed decimal
+			vBatt = readVoltage(Batt);
+			iBatt = readCurrent(Batt, Disc_Sense_Resistance);
+			power = (vBatt * iBatt) / 1000; //divided by 1000 to prevent it from being 6 point fixed decimal
 											//because these numbers are 32 bit, we don't have to worry about overflow or anything
 			if (power < 30 * 1000)
 			{ //if less than 30W in 3 point fixed decimal, then increase duty cycle by ~2%
@@ -414,14 +417,7 @@ ISR(TOV1_vect)
 //this functions works as a one second timer that causes the program to log data once a second
 
 	GblClk++; //one second has passed so add some time
-	if((Batt0Status & (1 << ALLDONE)) && (Batt1Status & (1 << ALLDONE)) &&
-			(Batt2Status & (1 << ALLDONE)) && (Batt3Status & (1 << ALLDONE))) //check if all batteries are done
-			{
-		//say all done over uart
-			}
-	else{ //otherwise log the batteries
-logBattery(some globals); //The data here probably needs to be global since it's in an ISR
-//would like a clever way to log data here. Would like to log all data here
+	LogData = true;
 	}
 }
 }
@@ -435,8 +431,10 @@ int main()
 uint32_t vBatt0, iBatt0, vBatt1, iBatt1;
 uint32_t tBatt0, tBatt1, tBatt2, tBatt3; //such large numbers because doing fixed point math
 uint32_t vBatt2, iBatt2, vBatt3, iBatt3;
-uint32_t GblClkCpy; //copy of global clk
 
+uint32_t GblClkCpy; //copy of global clk
+//log data on startup
+LogData = true;
 
  //Declaration of Outputs and Inputs
 DDRC |= (1 << BATT_EN_2_2) | (1 << DISC_EN_2) | (1 << BATT_EN_1_1)
@@ -454,14 +452,14 @@ configureADCWaitClk();
 sei();
  //enable gbl interrupts
  //start with a few initial values
-readVoltage(&vBatt0, Batt_Conn_1_1); //same for batt 1, 2, and 3
-readVoltage(&vBatt1, Batt_Conn_2_1);
-readVoltage(&vBatt2, Batt_Conn_1_2);
-readVoltage(&vBatt3, Batt_Conn_2_2);
-readBattTemp(&tBatt0, T_Batt_1);
-readBattTemp(&tBatt1, T_Batt_2);
-readBattTemp(&tBatt2, T_Batt_3);
-readBattTemp(&tBatt3,T_Batt_4); //start  by reading voltage and temperature through everything
+vBatt0 = readVoltage(Batt_Conn_1_1); //same for batt 1, 2, and 3
+vBatt1 = readVoltage(Batt_Conn_2_1);
+vBatt2 = readVoltage(Batt_Conn_1_2);
+vBatt3 = readVoltage(Batt_Conn_2_2);
+tBatt0 = readBattTemp(T_Batt_1);
+tBatt1 = readBattTemp(T_Batt_2);
+tBatt2 = readBattTemp(T_Batt_3);
+tBatt3 = readBattTemp(T_Batt_4); //start  by reading voltage and temperature through everything
 
  //set up variables for Discharging and charging batteries
 uint8_t duty_cycle0 = 0, duty_cycle1 = 0; //duty_cycle0 controls the duty cycle for the discharge of batteries 0 and 1 duty_cycle1 controls batteries 2 and 3
@@ -612,7 +610,10 @@ if (GblClkCpy != GblClk)
 	}
 }
 GblClkCpy = GblClk;
-
+if(LogData){
+	logBattery(/*stuff*/);
+	logData = false;
+}
 }
 return 1;
 }
