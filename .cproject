@@ -32,6 +32,7 @@
 								<option id="de.innot.avreclipse.compiler.option.optimize.1629245407" name="Optimization Level" superClass="de.innot.avreclipse.compiler.option.optimize"/>
 								<option id="de.innot.avreclipse.compiler.option.incpath.1464660997" name="Include Paths (-I)" superClass="de.innot.avreclipse.compiler.option.incpath" valueType="includePath">
 									<listOptionValue builtIn="false" value="/home/nmah/Code/AVRLibrary/AVRLibrary"/>
+									<listOptionValue builtIn="false" value="/home/nmah/Code/BatteryCharacterizer"/>
 								</option>
 								<inputType id="de.innot.avreclipse.compiler.winavr.input.614817842" name="C Source Files" superClass="de.innot.avreclipse.compiler.winavr.input"/>
 							</tool>
@@ -40,6 +41,7 @@
 								<option id="de.innot.avreclipse.cppcompiler.option.optimize.258351413" name="Optimization Level" superClass="de.innot.avreclipse.cppcompiler.option.optimize"/>
 								<option id="de.innot.avreclipse.cppcompiler.option.incpath.1900950689" name="Include Paths (-I)" superClass="de.innot.avreclipse.cppcompiler.option.incpath" valueType="includePath">
 									<listOptionValue builtIn="false" value="/home/nmah/Code/AVRLibrary/AVRLibrary"/>
+									<listOptionValue builtIn="false" value="/home/nmah/Code/BatteryCharacterizer"/>
 								</option>
 								<inputType id="de.innot.avreclipse.cppcompiler.input.543852115" superClass="de.innot.avreclipse.cppcompiler.input"/>
 							</tool>

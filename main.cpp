@@ -19,12 +19,12 @@
 #include <arduino/SPI.h>
 #include <arduino/HardwareSerial.cpp>
 #include <PWM.hpp>
+#include <LoggingFunctions.h>
 
 const uint8_t MOSI = 3;
 const uint8_t MISO = 4;
 const uint8_t SCK = 5;
 const uint8_t CS0 = 2;
-const float rinf = rThermistor25 * pow(e, (-bThermistor / 25));
 #define T_Batt_1                PC5
 #define T_Batt_2                PC4
 #define T_Batt_3                7 //ADC6
@@ -53,22 +53,38 @@ const float rinf = rThermistor25 * pow(e, (-bThermistor / 25));
 #define Batt_Conn_2_2           2
 #define I_Sense_1               3
 #define I_Sense_2               4
-#define Disc_Sense_Resistance   5 //Discharge sense resistance: 0.005
-#define Charge_Sense_Resistance 5 //charge sense resistance: 0.047
+#define Disc_Sense_Resistance   5 //Discharge sense resistance: 0.005, in fixed decimal format 3 places
+#define Charge_Sense_Resistance 47 //charge sense resistance: 0.047. in fixed decimal format 3 places
 #define vRef                    5 // reference voltage
+#define vRef2FixedPoint			500 //reference voltage in 3 decimal point fixed math
+#define vRef3FixedPoint			5000
 #define rThermistor25			10000 // thermistor resistance at 25C
 #define rSeries					10000 // series resistor
+#define rSeriesFixedPoint		1000000 //fixed point version of above number
 #define bThermistor				3971 //beta value of thermistor
 #define RoomTemp                25
 #define maxVoltage              5
-#define CEILING16B				65535 //max number of 16 bit number
-#define CEILING12B				4095 //See Above
-#define CEILING10B				1023 //See Above
-#define CEILING8B				255 //See Above
-#define OVERCHARGEVOLTAGE		(CEILING10B / vRef) * 0.5 //10B representation of 0.5V
-														  //voltage to overcharge to when targetting a voltage less than 4.2
-														  //hopefully this will make an uint16_t num, but unsure
+#define MAX16B				65535 //max number of 16 bit number
+#define MAX12B				4095 //See Above
+#define MAX10B				1023 //See Above
+#define MAX8B				255 //See Above
+#define OVERCHARGEVOLTAGE		(MAX10B / vRef) * 0.5 //10B representation of 0.5V
+//voltage to overcharge to when targetting a voltage less than 4.2
+//hopefully this will make an uint16_t num, but unsure
+#define NUMSAMPLES				5 //not sure how many samples yet
 #define SETCURRENT				// come up with an equation here: set current is 10A
+#define F_CLK					16000000 //16MHz
+#define GBL_CLK_PRESCALER		256
+#define GBL_CLK_MAX_VAL			MAX16B - (F_CLK / GBL_CLK_PRESCALER) //should be 3036
+#define POLL_CLK_PRESCALER		256
+const uint16_t PollClkCutoff = 	244; //F_CLK / (MAX8B * POLL_CLK_PRESCALER);
+const uint8_t CCDutyStartVal =	134; //52.4% duty cycle in 8b format. Calculated to produce a duty cycle that puts 10A through discharge circuit at 4.2V
+const uint8_t CPDutyStartVal =	96; //37.4% duty cycle in  8b format. 30W at  4.2V
+const uint32_t tCutoff = 		246700; //need to calc this value, but it should be the resistive equivalent to 60C: 2467
+								  //calculated by steinhart hart equation
+								  //also in fixed point form
+const float rinf = rThermistor25 * exp((-bThermistor / 25)); //this is a constant for calculating battery temperature
+
 volatile uint16_t ClkCounter; //define a counter
 volatile uint32_t GblClk; //global clock
 /** pin mappings on MCU:
@@ -110,6 +126,16 @@ volatile uint32_t GblClk; //global clock
  * Batt_Conn_2_2 = IN2 Voltage of battery 4
  * I_Sense_2 = IN4  Current sense of discharging of battery 3 and 4
  */
+//status bits
+volatile uint8_t Batt0Status, Batt1Status, Batt2Status, Batt3Status;
+#define WAITING		0 //waiting for counterpart battery
+#define CHARGING	1 //charging to 4.2V or storage voltage
+#define FULLCHARGED	2 //charged to 4.2V or something similar
+#define CCIP		3 //Constant current discharge in progress
+#define CCDONE		4 //finished constant current discharge
+#define CPIP		5 //constant power discharge in progress
+#define CPDONE		6 //finished constant power discharge
+#define ALLDONE		7 //finished all tests and charge to storage voltage
 
 //uint16_t read_MCU_ADC(uint8_t T_Batt){
 //	uint16_t ADCvoltage;
@@ -128,17 +154,16 @@ volatile uint32_t GblClk; //global clock
  */
 
 uint16_t readBattTemp(uint8_t Batt) {
-	uint16_t vThermistor;
-	vThermistor = analogRead(Batt);
-	return rSeries * ((vRef / vThermistor) - 1); //returning resistance of Thermistor
-												 //not returning temperature since requires float math
-										 //will calculate actual temperature during logging
+	uint32_t vThermistor; //vThermistor cannot be more than 4096 / 2 because vThermistor is at most 1/2 vRef
+	vThermistor = (analogRead(Batt) * vRef2FixedPoint)  / MAX12B; //may need to ditch analogRead, also converting to Fixed math with 2 decimal points
+	return (((rSeriesFixedPoint * vRef2FixedPoint) / vThermistor) - rSeriesFixedPoint); //returning resistance of Thermistor
 }
 
-uint16_t readCurrent(uint8_t Batt, uint16_t resistance) { //batt refers to which battery to enable
-	uint16_t current, voltage;
+uint32_t readCurrent(uint8_t Batt, uint32_t resistance) { //batt refers to which battery to enable
+	uint32_t current, voltage;
 	voltage = Transmit_SPI_Master_16(Batt << 3, 0, CS0); // bit shift left by 3 to move batt to the correct position in ADC register
-	current = voltage / resistance;
+	voltage *= vRef3FixedPoint / MAX12B; //convert to fixed point 3 decimal places
+	current = voltage / resistance; //resistance must be in 3 decimal place fixed point
 	return current;
 }
 
@@ -146,25 +171,35 @@ uint16_t readVoltage(uint8_t Batt) { //batt refers to which battery enable
 
 	uint16_t voltage;
 	voltage = Transmit_SPI_Master_16(Batt << 3, 0, CS0);
-	voltage *= CEILING16B / CEILING12B; //map to 16 bit
+	voltage *= vRef3FixedPoint / MAX12B; //scaled to 3 decimal place fixed point. Don't need any more decimal places because
+										// 12B can't do better than 1 mV, so just wasting it anyways
 	return voltage;
 }
+/* save this function if antialiasing issues arise due to battery capacitive enough of a load
+ void avgVoltandCurr(uint16_t * avgVolt, uint16_t * avgCurr, uint8_t Batt, uint16_t resistance){
+ uint32_t sumVolt, sumCurr;
+ for (uint8_t i = 0; i < NUMSAMPLES; i ++){ //go for so many cycles
+ //do some shit
 
-uint32_t charge(uint8_t Batt, uint16_t vStop, uint16_t iStop,
-		uint16_t prevElapsedTime) { // batt refers to which battery to enable. vstop refers to what voltage to start checking Istop at, or when to cutoff if vstop is not 4.2V. Istop refers to what current to stop charging at
+ while(TCNT2 <= ); //wait for some time
+ }
+ *avgVolt = sumVolt / NUMSAMPLES;
+ *avgCurr = sumCurr / NUMSAMPLES; //getting avg
+ }
+ */
 
+uint32_t charge(uint8_t Batt, uint16_t vStop, uint16_t iStop, uint8_t * BattStatusPtr) { // batt refers to which battery to enable. vstop refers to what voltage to start checking Istop at, or when to cutoff if vstop is not 4.2V. Istop refers to what current to stop charging at
+	//BattStatusPtr, points to the status register of the specific battery
 	uint16_t time, stop_val, vBatt, iBatt, prevTime;
-	time = prevElapsedTime;
-	if(Batt == 0){
+	if (Batt == 0) {
 		turnOffPWM(DISC_EN_1); // turn off PWM first
 		PORTB |= (1 << CHARGE_EN_1) | (1 << CHARGE_1_1); //enable charger and charging mosfet
 		PORTC &= ~(1 << CHARGE_2_1); //make sure not charging two batteries at once(could lead to short between batteries
 		PORTC |= (1 << BATT_EN_1_1); //open connection to battery
 									 //two separate battery enables to take advantage of body diodes, see EAGLE schematic
-
 	}
 
-	else if (Batt == 1){
+	else if (Batt == 1) {
 		//same as above
 		turnOffPWM(DISC_EN_1);
 		PORTB |= (1 << CHARGE_EN_1);
@@ -172,10 +207,9 @@ uint32_t charge(uint8_t Batt, uint16_t vStop, uint16_t iStop,
 		PORTC |= (1 << CHARGE_2_1);
 		PORTD |= (1 << BATT_EN_2_1);
 
-
 	}
 
-	else if (Batt == 2){
+	else if (Batt == 2) {
 		//same as above
 		turnOffPWM(DISC_EN_2);
 		PORTD |= (1 << CHARGE_EN_2) | (1 << CHARGE_1_2) | (1 << BATT_EN_1_2);
@@ -183,13 +217,12 @@ uint32_t charge(uint8_t Batt, uint16_t vStop, uint16_t iStop,
 
 	}
 
-	else if(Batt == 3){
+	else if (Batt == 3) {
 		//same as above
 		turnOffPWM(DISC_EN_2);
 		PORTD |= (1 << CHARGE_EN_2);
 		PORTC |= (1 << CHARGE_2_2) | (1 << BATT_EN_2_2);
 		PORTD &= ~(1 << CHARGE_1_2);
-
 
 	}
 
@@ -204,7 +237,7 @@ uint32_t charge(uint8_t Batt, uint16_t vStop, uint16_t iStop,
 
 		time += (TCNT1 - prevTime);
 		vBatt = readVoltage(Batt);
-		if(vBatt >= stop_val){
+		if (vBatt >= stop_val) {
 			//stop charging
 		}
 	}
@@ -212,63 +245,61 @@ uint32_t charge(uint8_t Batt, uint16_t vStop, uint16_t iStop,
 	return time;
 }
 
-uint16_t discharge10A(uint8_t Batt, uint16_t discTime, uint16_t duty_cycle) { //batt refers to which battery to enable
+void discharge10A(uint8_t Batt, uint8_t duty_cycle) { //batt refers to which battery to enable
 //not sure what data size time should be yet
 // chosen resistor may not be low enough to handle 15A CC discharge
 // if so, will switch to 10A
-	uint16_t vBatt, iBatt, Time, prevTime;
+
+	uint16_t vBatt, iBatt;
 	enablePWM(Batt);
 	vBatt = readVoltage(Batt);
 	iBatt = readCurrent(Batt, Disc_Sense_Resistance);
-	Time = discTime;
 
-	while (Time < 5) { //time needs to be scaled voltage also
-		prevTime = TCNT1; //counter register
+	for (uint8_t i = 0; i < 4; i++) { //this number needs to be decided
 		vBatt = readVoltage(Batt);
 		iBatt = readCurrent(Batt, Disc_Sense_Resistance);
 		if (vBatt <= 2.8) { //exit CC discharge if voltage gets too low
-			return NULL;
-		}
-
-		if (iBatt < 10) { //need to scale current
-			duty_cycle++;
-		}
-		else if (iBatt > 10) {
-			duty_cycle--;
-		}
-
-		if (vBatt <= 2.8) {
 			duty_cycle = 0;
-
+			break;
 		}
-		setDutyCycle(Batt, duty_cycle);
-		Time += (TCNT1 - prevTime); //need to account for overflow
-	}
 
-	return Time;
+		else if (iBatt < 10) { //need to scale current
+			duty_cycle += 10; //magic number controlling how much change to the duty cycle is going to be needed
+		} else if (iBatt > 10) {
+			duty_cycle-= 10; //see above
+		}
+
+		setDutyCycle(Batt, duty_cycle);
+		TCNT2 = 0; //reset counter
+		while (TCNT2 <= PollClkCutoff); //wait for 4 ms, may need to be less
+	}
 }
-uint16_t discharge30W(uint8_t Batt, uint16_t vStop, uint16_t prevElapsedTime) { //batt refers to which battery to enable
+uint16_t discharge30W(uint8_t Batt, uint16_t vStop) { //batt refers to which battery to enable
 
-	uint16_t voltage, current, disc_en, power, elapsedTime, prevTime;
+	uint16_t vBatt, iBatt, disc_en, power;
 	uint8_t duty_cycle;
-	enablePWM(Batt);
-	prevTime = TCNT1; //counter register
-	while ((voltage >= vStop) && (Time < 5)) {
-		//discharge batteries
-		disc_en = 1;
-		voltage = readVoltage(Batt);
-		current = readCurrent(Batt, Disc_Sense_Resistance);
-		power = voltage * current;
+	if (vBatt <= vStop) {
+		turnOffPWM(Batt);
+	} else {
+		enablePWM(Batt);
+		for (uint8_t i = 0; i < 4; i++) {		//discharge batteries
+			disc_en = 1;
+			vBatt = readVoltage(Batt);
+			iBatt = readCurrent(Batt, Disc_Sense_Resistance);
+			power = vBatt * iBatt; //this needs to be scaled properly
 
-		if (power < 30) { //scale this value properly
-			duty_cycle++;
-		} else if (power > 30) { //very simple P loop
-			duty_cycle--;
+			if (power < 30) { //scale this value properly
+				duty_cycle++;
+			} else if (power > 30) { //very simple P loop
+				duty_cycle--;
+			}
+			setDutyCycle(Batt, duty_cycle);
+			TCNT2 = 0;
+			while (TCNT2 <= PollClkCutoff)
+				;
 		}
-		setDutyCycle(Batt, duty_cycle);
-		elapsedTime += (TCNT1 - prevTime); //need to account for overflow
 	}
-	return elapsedTime;
+	return duty_cycle;
 
 }
 
@@ -279,14 +310,13 @@ uint16_t calcThermTemp(uint16_t rThermistor) {
 
 }
 
-
 void logBattery(uint8_t batt, uint16_t vBatt, uint16_t iBatt, uint16_t tBatt) { //sends data to computer via usb through ftdi chip with uart
 	uint16_t voltage, current, temperature;
 	float16(&voltage, (float(vBatt) * 5 / 4096));
 	float16(&current, (float(iBatt) * 5 / 4096));
 	float16(&temperature, float(calcThermTemp(tBatt)));
 	uint16_t power = voltage * current;
-	Serial1.write(voltage); //this is wrong, but need to get the point accross
+	Serial1.write(voltage); //this is wrong, but need to get the point across
 }
 
 void Initialize_PWM(void) //correct values for each register still need to be determined
@@ -307,70 +337,74 @@ void Initialize_ADCs(void) //correct values for each register still need to be d
 // ADC6 and ADC7
 }
 
-void configureGblClk(void){ //This function will set up the global clock
+void configureGblClk(void) { //This function will set up the global clock
 
-	TCCR2A = 0x02; //set counter2 as normal timer
-	TCCR2B = 0x07; //set prescaler for clk/1024
-	TIMSK2 = 0x01; //set interrupt on overflow
+	TCCR1A = 0x00; //set counter1 as normal timer
+	TCCR1B |= (1 << WGM12) | (1 << CS12); //set prescaler for clk/256 and operate on CTC mode
+	OCR1A = GBL_CLK_MAX_VAL; //precalculated number
+	//OCR1A holds OCR1AL and OCR1AH
+	TIMSK1 = 0x01; //set interrupt on overflow
 
 }
 
-void runforsometime(void){ //this is not a function, but a description of code to be inserted elsewhere
-	clear counter2
-	uint8_t randomvar, time;
-	while((randomvar != time))){ //need to check for longer 980Hz
-		//somecode				 //980Hz / 4 should be good
-		clearcounter
-		while(counteroverflowflag); //similar to delay function
-		randomvar ++;
-	}
+void configureADCPollClk(void) { // not sure exactly what to call this, but this loop dictates how long before taking an ADC measurement
+	TCCR2A = 0x00; //set counter1 as normal timer
+	TCCR2B |= (1 << CS22) | (1 << CS21); //set prescaler for 256
+
 }
 
-ISR(TOV2_vect){ //I'm not sure if this is how this works
-	//this functions works as a one second timer that causes the program to log data once a second
-	//considering not making this an interrupt since it might mess up SPI
-	ClkCounter ++;
-	if (ClkCounter == somenum){ //set this to be whatever it needs to be 1s
-		ClkCounter = 0; //reset counter
-		GblClk ++; //one second has passed so add some time
-		logBattery(some globals); //would like a clever way to log data here
-	}
+//
+//void runforsometime(void) { //this is not a function, but a description of code to be inserted elsewhere
+//	clear counter2
+//	uint8_t randomvar, time;
+//while((randomvar <= time))) { //need to check for longer 980Hz
+//	//somecode				 //980Hz / 4 should be good
+//	clearcounter
+//	while(counteroverflowflag);//similar to delay function
+//	randomvar ++;
+//}
+//}
+
+ISR(TOV1_vect) { //I'm not sure if this is how this works
+//this functions works as a one second timer that causes the program to log data once a second
+
+GblClk++; //one second has passed so add some time
+logBattery(some globals); //would like a clever way to log data here. Would like to log all data here
+
+}
 }
 /** Needed Features/improvements
- * Might want to change the discharge functions so
- * we only have 1 function with a 30A CC and 30W CP
- * option on the parameters. Not sure how to
- * implement this though. Code for CC and CP are almost
- * identical. This is because there parameter for the
- * while loop for discharging. Also, need to figure out
- * how to write values outside of the function to report
- * voltage and current continuously. This isn't a
- * necessary feature, but it would be very nice to have.
- * Also, need to figure out how to set fuse bits, and do
- * some port mapping.
+ *FUSE bits needs to be set
+ *need to work on discharge functions and figuring out how to do timing for CC discharge
+ *could rely on just having the program count the time from the gbl clk
+ *should be fine since the gbl clk is gonna be close enough
+ *although precision will drop slightly because of that
+ *also should probably make all of the battery voltages and stuff globals
  */
 
-int main() {
+	int main() {
 
 	uint16_t vBatt0, iBatt0, vBatt1, iBatt1;
-	uint16_t tBatt0, tBatt1, tBatt2, tBatt3;
+	uint32_t tBatt0, tBatt1, tBatt2, tBatt3; //such large numbers because doing fixed point math
 	uint16_t vBatt2, iBatt2, vBatt3, iBatt3;
+	uint32_t GblClkCpy; //copy of global clk
 	bool battTested0 = 0, battTested1 = 0, battTested2 = 0, battTested3 = 0; //boolean for whether or not the battery has been tested
 
-//Declaration of Outputs and Inputs
+	//Declaration of Outputs and Inputs
 	DDRC |= (1 << BATT_EN_2_2) | (1 << DISC_EN_2) | (1 << BATT_EN_1_1)
-			| (1 << CHARGE_2_2);
+	| (1 << CHARGE_2_2);
 	DDRD &= ~(1 << RX);
 	DDRB &= ~((1 << MISO) | (1 << XTAL1) | (1 << XTAL2));
-//Initialization of Communication Protocols
+	//Initialization of Communication Protocols
 	Initialize_ADCs();
 	Initialize_PWM();
 	Serial1.begin(57600); //Initialize UART1
 	Initialize_SPI_Master(CS0);
-//set up 1 second clock
+	//set up counters and clocks
 	configureGblClk();
+	configureADCPollClk();
 	sei(); //enable gbl interrupts
-
+	//start with a few initial values
 	vBatt0 = readVoltage(Batt_Conn_1_1); //same for batt 1, 2, and 3
 	vBatt1 = readVoltage(Batt_Conn_2_1);
 	vBatt2 = readVoltage(Batt_Conn_1_2);
@@ -380,34 +414,130 @@ int main() {
 	tBatt2 = readBattTemp(T_Batt_3);
 	tBatt3 = readBattTemp(T_Batt_4); //start  by reading voltage and temperature through everything
 
+	//set up variables for Discharging and charging batteries
+	uint8_t duty_cycle0 = 0, duty_cycle1 = 0; //duty_cycle0 controls the duty cycle for the discharge of batteries 0 and 1 duty_cycle1 controls batteries 2 and 3
+
 	while (1) { //main loop
-
-		if (!battTested0) { //
-			vBatt0 = readVoltage(0);
-			iBatt0 = readCurrent(0);
+		//batteries 0 and 1
+		if (!(Batt0Status & ((1 << ALLDONE) | (1 << CPIP) | (1 << CCIP) | (1 << FULLCHARGED) | (1 << WAITING)))) {
+			//above bool states that if you're not doing a test, are fully charged, completely done testing and not waiting for another batteries test
+			//start charging
+			//charging
+			charge(BATT0, f);
 		}
 
-		else if (!battTested1) {
-			vBatt1 = readVoltage(1);
-			iBatt1 = readCurrent(1);
+		else if (!(Batt0Status & (1 << WAITING)) && !(Batt0Status & (1 << CCDONE))) { //check to make sure not waiting on other battery
+			//Constant Current
+			if(!(Batt0Status & (1 << CCIP))){
+				duty_cycle0 = CCDutyStartVal; //start with a duty cycle close to what CC needs it to be
+				Batt0Status |= (1 << CCIP);
+			}
+		discharge10A(BATT0);
+			if(duty_cycle0 == 0){
+				Batt0Status |= (1 << CCDONE); //turn on CCDONE flag
+				Batt0Status &= ~(1 << CCIP); //turn off CCIP flag
+			}
 		}
+
+		else if (!(Batt0Status & (1 << WAITING)) && !(Batt0Status & (1 << CPDONE))){
+			//Constant Power Discharge
+			if(!(Batt0Status & (1 << CPIP))){
+				duty_cycle0 = CPDutyStartVal;
+				Batt0Status |= (1 << CPIP);
+			}
+			discharge30W(BATT0);
+			if(duty_cycle0 == 0){
+				Batt0Status |= (1 << CPDONE);
+				Batt0Status &= ~(1 << CPIP);
+			}
+		}
+
+		else if ((Batt1Status == 0) || (Batt1Status & (1 << CHARGING))) { //start charging or continue charging
+			//charging
+			charge(BATT1);
+		}
+
+		else if (!(Batt1Status & (1 << WAITING)) && !(Batt1Status & (1 << CCDONE))) { //check to make sure not waiting on other battery
+			//Constant Current
+			if(!(Batt1Status & (1 << CCIP))){
+				duty_cycle0 = CCDutyStartVal; //start with a duty cycle close to what CC needs it to be
+				Batt1Status |= (1 << CCIP);
+			}
+		discharge10A(BATT1);
+			if(duty_cycle0 == 0){
+				Batt1Status |= (1 << CCDONE); //turn on CCDONE flag
+				Batt1Status &= ~(1 << CCIP); //turn off CCIP flag
+			}
+		}
+
+		else if (!(Batt1Status & (1 << WAITING)) && !(Batt1Status & (1 << CPDONE))){
+			//Constant Power Discharge
+			if(!(Batt1Status & (1 << CPIP))){
+				duty_cycle0 = CPDutyStartVal;
+				Batt1Status |= (1 << CPIP);
+			}
+			discharge30W(BATT1);
+			if(duty_cycle0 == 0){
+				Batt1Status |= (1 << CPDONE);
+				Batt1Status &= ~(1 << CPIP);
+			}
+		}
+
+		//batteries 2 and 3
+		if ((Batt2Status == 0) || (Batt2Status & (1 << CHARGING))) { //start charging or continue charging
+			//charging
+			charge(BATT2);
+		}
+
+		else if (!(Batt2Status & (1 << WAITING)) && !(Batt2Status & (1 << CCDONE))) { //check to make sure not waiting on other battery
+			//Constant Current
+			discharge10A(BATT2);
+		}
+
+		else if (!(Batt2Status & (1 << WAITING)) && !(Batt2Status & (1 << CPDONE))){
+			//Constant Power Discharge
+			discharge30W(BATT2);
+		}
+
+		else if ((Batt3Status == 0) || (Batt3Status & (1 << CHARGING))) { //start charging or continue charging
+			//charging
+			charge(BATT3);
+		}
+
+		else if (!(Batt3Status & (1 << WAITING)) && !(Batt3Status & (1 << CCDONE))) { //check to make sure not waiting on other battery
+			//Constant Current
+			discharge10A(BATT3);
+		}
+
+		else if (!(Batt3Status & (1 << WAITING)) && !(Batt3Status & (1 << CPDONE))){
+			//Constant Power Discharge
+			discharge30W(BATT3);
+		}
+
 
 		else {
 
 		}
 
-		if (!battTested2) {
-			vBatt2 = readVoltage(2);
-			iBatt2 = readCurrent(2);
+		if(GblClkCpy != GblClk){ //only measure temperature once a second
+			tBatt0 = readBattTemp(T_Batt_1);
+			tBatt1 = readBattTemp(T_Batt_2);
+			tBatt2 = readBattTemp(T_Batt_3);
+			tBatt3 = readBattTemp(T_Batt_4);
+			if(tBatt0 >= tCutoff){
+				Batt0Status = 1 << ALLDONE; //end testing
+			}
+			if(tBatt1 >= tCutoff){
+				Batt1Status = 1 << ALLDONE; //end testing
+			}
+			if(tBatt2 >= tCutoff){
+				Batt2Status = 1 << ALLDONE; //end testing
+			}
+			if(tBatt3 >= tCutoff){
+				Batt3Status = 1 << ALLDONE; //end testing
+			}
 		}
+		GblClkCpy = GblClk;
 
-		else if (!battTested3) {
-			vBatt3 = readVoltage(3);
-			iBatt3 = readCurrent(3);
-		}
-
-		else {
-
-		}
 	}
 }

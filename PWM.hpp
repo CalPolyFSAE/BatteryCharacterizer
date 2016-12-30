@@ -5,7 +5,7 @@
 
 
 
-void setDutyCycle(uint8_t Channel, uint16_t duty_cycle) { //this function exists because analogWrite doesn't use OCR0x register. Or at least it doesn't look like it
+void setDutyCycle(uint8_t Channel, uint8_t duty_cycle) { //this function exists because analogWrite doesn't use OCR0x register. Or at least it doesn't look like it
 
 	if (Channel == 5) {
 
