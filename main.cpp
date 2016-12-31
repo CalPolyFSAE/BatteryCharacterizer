@@ -156,6 +156,7 @@ struct Battery
 	uint32_t Voltage; //3 point fixed decimal
 	uint32_t Current; //3 point fixed decimal
 	uint32_t Temperature; //2 point fixed decimal
+	uint32_t CCEndVolt; //3 point fixed decimal, this is the voltage at the end of the CC discharge
 	uint8_t Status; //current status of Battery
 	uint8_t CCTime; //time at constant current
 	uint16_t CPTime; //maybe would be nice if I didn't need this to reduce struct size
@@ -164,6 +165,7 @@ struct Battery
 	uint8_t chargeChannel; //ADC address for reading charge current
 	uint8_t discChannel; //ADC address for reading disc current
 	uint8_t voltChannel; //ADC address for reading voltage
+
 	bool Failed;
 };
 
@@ -303,7 +305,9 @@ for (uint8_t i = 0; i < 4; i++)
 		}
 		else
 		{
-			Battcpy.Status |= (1 << CCDONE);
+			Batt.CCEndVolt = Batt.Voltage;
+			Batt.Status |= (1 << CCDONE); //turn on CCDONE flag
+			Batt.Status &= ~(1 << CCIP); //turn off CCIP flag
 			//do something to save time here
 		}
 		break; //should break from loop
@@ -330,12 +334,13 @@ struct Battery Battcpy = Batt;
 uint32_t power;
 for (uint8_t i = 0; i < 4; i++)
 { //this number needs to be decided
-	Battcpy.Voltage = readVoltage(vChannel);
-	Battcpy.Current = readCurrent(iChannel, Disc_Sense_Resistance);
+	Battcpy.Voltage = readVoltage(Batt.voltChannel);
+	Battcpy.Current = readCurrent(Batt.chargeChannel, Disc_Sense_Resistance);
 	power = Battcpy.Voltage * Battcpy.Current;
 	if ((Battcpy.Voltage <= 2800))
 	{ //exit CP is done when voltage is <= 2.8V
 		turnOffPWM(Batt.Name); //shut it down
+		Batt.Status &= ~(1 << CPIP);
 		Batt.Status |= (1 << CPDONE);
 		break; //should break from loop
 	}
@@ -375,10 +380,12 @@ for (uint8_t i = 0; i < 4; i++)
 	{
 		Batt.dutyCycle += 5;
 	}
-	else if(power >= 30 * 1000){
+	else if (power >= 30 * 1000)
+	{
 		Batt.dutyCycle -= 5;
 	}
-	if(Batt.CPTime == 5){
+	if (Batt.CPTime == 5)
+	{
 		//save current and voltage
 	}
 }
@@ -503,6 +510,7 @@ sei();
 //enable gbl interrupts
 //start with a few initial values
 GblClk = 0; //initialize GblClk to be 0
+//create variables to store voltage and time
 //start with Batt0 and Batt2 enables
 Batt0.Status &= ~(1 << WAITING);
 Batt1.Status |= (1 << WAITING);
@@ -513,11 +521,13 @@ PORTD &= ~(1 << BATT_EN_2_1);
 PORTD |= (1 << BATT_EN_1_2);
 PORTC &= ~(1 << BATT_EN_2_2);
 
+
 while (1)
 { //main loop
 //batteries 0 and 1
 	if (!(Batt0.Failed || Batt1.Failed || Batt2.Failed || Batt3.Failed)) //make sure none of the batteries failed
 	{
+		//Switch Batteries
 		if ((Batt0.Status & (1 << ALLDONE)) && (Batt1.Status & (1 << WAITING))) //if Batt0 is done testing and Batt1 is waiting to be tested, start testing
 		{
 //above bool states that if you're not doing a test, are fully charged, completely done testing and not waiting for another batteries test
@@ -526,35 +536,36 @@ while (1)
 			PORTC &= ~(1 << BATT_EN_1_1);
 			PORTD |= (1 << BATT_EN_2_1); //swap battery enables
 		}
-		else if (!(Batt0.Status & ((1 << FULLCHARGED) | (1 << CCIP) | (1 << CPIP) | (1 << WAITING) | (1 << ALLDONE)))){
+		//Charge Batt0
+		else if (!(Batt0.Status
+				& ((1 << FULLCHARGED) | (1 << CCIP) | (1 << CPIP)
+						| (1 << WAITING) | (1 << ALLDONE))))
+		{
 			//charge if not in a test, waiting or completely done
 			turnOffPWM(DISC_EN_1); //shut down PWM
 			PORTB |= (1 << CHARGE_EN_1) | (1 << CHARGE_1_1); //enable charger and charging mosfet
 			PORTC &= ~(1 << CHARGE_2_1); //make sure not charging two batteries at once(could lead to short between batteries
 			PORTC |= (1 << BATT_EN_1_1); //open connection to battery
 										 //two separate battery enables to take advantage of body diodes, see EAGLE schematic
-			if (Batt0.Status & (1 << CCDONE)){
-				Batt0 = chargeBatt(Batt0,VFULLCHARGE, ICHARGEDONE); //charge to 4.2V
+			if (Batt0.Status & (1 << CCDONE))
+			{
+				Batt0 = chargeBatt(Batt0, VFULLCHARGE, ICHARGEDONE); //charge to 4.2V
 			}
-			else if(Batt0.Status & (1 << CPDONE)){
-				Batt0 = chargeBatt(Batt0,VSTORAGE, ICHARGESTART); //Charge to storage
+			else if (Batt0.Status & (1 << CPDONE))
+			{
+				Batt0 = chargeBatt(Batt0, VSTORAGE, ICHARGESTART); //Charge to storage
 			}
 		}
-		else if (!(Batt0.Status & (1 << WAITING))
-				&& !(Batt0.Status & (1 << CCDONE)))
-		{ //check to make sure not waiting on other battery
+		//CC Disc Batt 0
+		else if (!(Batt0.Status & ((1 << WAITING) | (1 << CCDONE))))
+		{ //check to make sure not waiting on other battery and not done CC
 //Constant Current
 			if (!(Batt0.Status & (1 << CCIP)))
 			{
-				dutyCycle0 = CCDutyStartVal; //start with a duty cycle close to what CC needs it to be
+				Batt0.dutyCycle = CCDutyStartVal; //start with a duty cycle close to what CC needs it to be
 				Batt0.Status |= (1 << CCIP);
 			}
-			discharge10A (BATT0);
-			if (dutyCycle0 == 0)
-			{
-				Batt0.Status |= (1 << CCDONE); //turn on CCDONE flag
-				Batt0.Status &= ~(1 << CCIP); //turn off CCIP flag
-			}
+			Batt0 = discharge10A (Batt0);
 		}
 
 		else if (!(Batt0.Status & (1 << WAITING))
@@ -563,24 +574,18 @@ while (1)
 //Constant Power Discharge
 			if (!(Batt0.Status & (1 << CPIP)))
 			{
-				dutyCycle0 = CPDutyStartVal;
+				Batt0.dutyCycle = CPDutyStartVal;
 				Batt0.Status |= (1 << CPIP);
 			}
 			discharge30W (BATT0);
-			if (dutyCycle0 == 0)
-			{
-				Batt0.Status |= (1 << CPDONE);
-				Batt0.Status &= ~(1 << CPIP);
-			}
 		}
-
 
 	}
 	else
 	{
 		//say failed or something
 	}
-	if (newSec || (/*add code to force a log if a CC test finished. Don't care about CP test finishes*/))
+	if (newSec)
 	{ //only measure temperature once a second
 		Batt0.Temperature = readBattTemp(T_Batt_1);
 		Batt1.Temperature = readBattTemp(T_Batt_2);
