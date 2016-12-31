@@ -339,7 +339,6 @@ struct Battery discharge30W(struct Battery Batt, uint16_t vStop)
 			Batt.Status |= (1 << CPDONE);
 			break; //should break from loop
 		}
-
 		else if (power < 30 * 1000)
 		{ //30W in 3 point fixed decimal, can be subbed with a variable if needed
 			Batt.dutyCycle += 5; //magic number controlling how much change to the duty cycle is going to be needed
@@ -353,6 +352,24 @@ struct Battery discharge30W(struct Battery Batt, uint16_t vStop)
 		Waitfor(2); //wait for 2 ms, should be good. Might want to change wait to be triggered on clk pulse
 	}
 	return Battcpy;
+
+}
+
+struct Battery dischargeFull(struct Battery Batt, uint16_t vsStop){
+	struct Battery Battcpy = Batt;
+	uint32_t power;
+	for(uint8_t i = 0; i < 4; i ++){
+	Battcpy.Voltage = readVoltage(Battcpy.voltChannel);
+	Battcpy.Current = readCurrent(Battcpy.discChannel, Disc_Sense_Resistance);
+	power = ((((Battcpy.Voltage / 1000) * Battcpy.Current) / 1000) * Battcpy.dutyCycle);
+	if (Battcpy.Voltage <= 2800){
+		turnOffPWM(Batt.Name);
+		Batt.Status |= (1 << CPDONE); // this would have to be changed
+		break;
+	}
+	power = Battcpy.Voltage * Battcpy.Current;
+	else if()
+	}
 
 }
 uint16_t calcThermTemp(uint16_t rThermistor)
