@@ -71,6 +71,7 @@ const uint8_t CS0 = 2;
 #define OVERCHARGEVOLTAGE	500	 //3 point fixed decimal representation of 0.5V
 #define Charge				1
 #define Discharge			0
+#define TESTSTARTVOLTAGE	4100
 //voltage to overcharge to when targetting a voltage less than 4.2
 //hopefully this will make an uint16_t num, but unsure
 #define NUMSAMPLES				5 //not sure how many samples yet
@@ -196,23 +197,23 @@ uint32_t readBattTemp(uint8_t Batt)
 			- rSeriesFixedPoint); //returning resistance of Thermistor
 }
 
-uint32_t readCurrent(uint8_t iChannel, uint8_t resistance)//if charge is true, then use charge sense and charge resistor, if not, assume discharge
+uint32_t readCurrent(uint8_t iChannel, uint8_t resistance) //if charge is true, then use charge sense and charge resistor, if not, assume discharge
 { //batt refers to which battery to enable
 
 	uint32_t vBatt;
-		vBatt = Transmit_SPI_Master_16(iChannel << 3, 0, CS0); //same as above except now doing discharge
-		vBatt = (vBatt * vRef3FixedPoint) / MAX12B;
-		return (vBatt / resistance) * 1000;
-	}
+	vBatt = Transmit_SPI_Master_16(iChannel << 3, 0, CS0); //same as above except now doing discharge
+	vBatt = (vBatt * vRef3FixedPoint) / MAX12B;
+	return (vBatt / resistance) * 1000;
+}
 
 }
 
 uint32_t readVoltage(uint8_t vChannel)
 { //batt refers to which battery enable
 
-	uint32_t vBatt = Transmit_SPI_Master_16(vChannel << 3, 0, CS0);
-	return (vBatt * vRef3FixedPoint) / MAX12B; //scaled to 3 decimal place fixed point. Don't need any more decimal places because
-											   // 12B can't do better than 1 mV, so just wasting it anyways
+uint32_t vBatt = Transmit_SPI_Master_16(vChannel << 3, 0, CS0);
+return (vBatt * vRef3FixedPoint) / MAX12B; //scaled to 3 decimal place fixed point. Don't need any more decimal places because
+// 12B can't do better than 1 mV, so just wasting it anyways
 }
 
 /* save this function if antialiasing issues arise due to battery capacitive enough of a load
@@ -231,171 +232,181 @@ uint32_t readVoltage(uint8_t vChannel)
 struct Battery charge(struct Battery Batt, uint16_t vStop, uint16_t iStop)
 { // batt refers to which battery to enable. vstop refers to what voltage to start checking Istop at, or when to cutoff if vstop is not 4.2V. Istop refers to what current to stop charging at
 //BattStatusPtr, points to the status register of the specific battery
-	struct Battery Battcpy = Batt; //copy Batt
-	if (Battcpy.Name == 0)
-	{
-		turnOffPWM(DISC_EN_1); // turn off PWM first
-		PORTB |= (1 << CHARGE_EN_1) | (1 << CHARGE_1_1); //enable charger and charging mosfet
-		PORTC &= ~(1 << CHARGE_2_1); //make sure not charging two batteries at once(could lead to short between batteries
-		PORTC |= (1 << BATT_EN_1_1); //open connection to battery
-									 //two separate battery enables to take advantage of body diodes, see EAGLE schematic
-	}
+struct Battery Battcpy = Batt; //copy Batt
+if (Battcpy.Name == 0)
+{
+	PORTB |= (1 << CHARGE_EN_1) | (1 << CHARGE_1_1); //enable charger and charging mosfet
+	PORTC &= ~(1 << CHARGE_2_1); //make sure not charging two batteries at once(could lead to short between batteries
+	PORTC |= (1 << BATT_EN_1_1); //open connection to battery
+								 //two separate battery enables to take advantage of body diodes, see EAGLE schematic
+}
 
-	else if (Battcpy.Name == 1)
-	{
-		//same as above
-		turnOffPWM(DISC_EN_1);
-		PORTB |= (1 << CHARGE_EN_1);
-		PORTB &= ~(1 << CHARGE_1_1);
-		PORTC |= (1 << CHARGE_2_1);
-		PORTD |= (1 << BATT_EN_2_1);
+else if (Battcpy.Name == 1)
+{
+	//same as above
+	PORTB |= (1 << CHARGE_EN_1);
+	PORTB &= ~(1 << CHARGE_1_1);
+	PORTC |= (1 << CHARGE_2_1);
+	PORTD |= (1 << BATT_EN_2_1);
 
-	}
+}
 
-	else if (Battcpy.Name == 2)
-	{
-		//same as above
-		turnOffPWM(DISC_EN_2);
-		PORTD |= (1 << CHARGE_EN_2) | (1 << CHARGE_1_2) | (1 << BATT_EN_1_2);
-		PORTC &= ~(1 << CHARGE_2_2);
+else if (Battcpy.Name == 2)
+{
+	//same as above
+	PORTD |= (1 << CHARGE_EN_2) | (1 << CHARGE_1_2) | (1 << BATT_EN_1_2);
+	PORTC &= ~(1 << CHARGE_2_2);
 
-	}
+}
 
-	else if (Battcpy.Name == 3)
-	{
-		//same as above
-		turnOffPWM(DISC_EN_2);
-		PORTD |= (1 << CHARGE_EN_2);
-		PORTC |= (1 << CHARGE_2_2) | (1 << BATT_EN_2_2);
-		PORTD &= ~(1 << CHARGE_1_2);
+else if (Battcpy.Name == 3)
+{
+	//same as above
+	PORTD |= (1 << CHARGE_EN_2);
+	PORTC |= (1 << CHARGE_2_2) | (1 << BATT_EN_2_2);
+	PORTD &= ~(1 << CHARGE_1_2);
 
-	}
-	//start charging
-	Waitfor(2); //wait for 2ms
-	Battcpy.Voltage = readVoltage(Battcpy.Name);
-	if ((Battcpy.Voltage >= vStop + OVERCHARGEVOLTAGE) && (vStop != 4200)) //when vBatt is above
-	{
-		Battcpy.Status |= (1 << FULLCHARGED);
-	}
-	else if (Battcpy.Current <= iStop)
-	{
-		Battcpy.Status |= (1 << ALLDONE); //if it makes it here, then the battery is done charging.
-		//A battery must have been CC and CP discharges and recharged to a storage voltage
-	}
-	return Battcpy;
+}
+//start charging
+Waitfor(2); //wait for 2ms
+Battcpy.Voltage = readVoltage(Battcpy.Name);
+if ((Battcpy.Voltage >= vStop + OVERCHARGEVOLTAGE) && (vStop != 4200)) //when vBatt is above
+{
+	Battcpy.Status |= (1 << FULLCHARGED);
+}
+else if (Battcpy.Current <= iStop)
+{
+	Battcpy.Status |= (1 << ALLDONE); //if it makes it here, then the battery is done charging.
+	//A battery must have been CC and CP discharges and recharged to a storage voltage
+}
+return Battcpy;
 }
 
 struct Battery discharge10A(struct Battery Batt) //maybe switch dutyCycle to a pointer, so I don't have to keep making and destroying it
 {
 //i and vChannel are the ADC channels to read from, could use if statement, but would be slower, might work if separate function is used
-	struct Battery Battcpy = Batt;
-	enablePWM(Batt.Name); //make pwm is always enable, in case just got out of charging
+struct Battery Battcpy = Batt;
+enablePWM(Batt.Name); //make pwm is always enable, in case just got out of charging
 
-	for (uint8_t i = 0; i < 4; i++)
-	{ //this number needs to be decided
-		Battcpy.Voltage = readVoltage(Batt.voltChannel);
-		Battcpy.Current = readCurrent(Batt.discChannel, Disc_Sense_Resistance);
-		if ((Battcpy.Voltage <= 2800) || (Battcpy.CCTime >= 5))
-		{ //exit CC discharge if voltage gets too low. Cutoff is 2.8V
-			turnOffPWM(Batt.Name); //shut it down
-			if (Battcpy.Voltage <= 2800)
-			{
-				Battcpy.Failed = true; //if the voltage gets this low, then something is wrong
-			}
-			else {
-				Battcpy.Status |= (1 << CCDONE);
-				//do something to save time here
-			}
-			break; //should break from loop
-		}
-
-		else if (Battcpy.Current < 10000)
-		{ //10A in 3 point fixed decimal, can be subbed with a variable if needed
-			Batt.dutyCycle += 5; //magic number controlling how much change to the duty cycle is going to be needed
-		}
-		else if (Battcpy.Current > 10000)
+for (uint8_t i = 0; i < 4; i++)
+{ //this number needs to be decided
+	Battcpy.Voltage = readVoltage(Batt.voltChannel);
+	Battcpy.Current = readCurrent(Batt.discChannel, Disc_Sense_Resistance);
+	if ((Battcpy.Voltage <= 2800) || (Battcpy.CCTime >= 5))
+	{ //exit CC discharge if voltage gets too low. Cutoff is 2.8V
+		turnOffPWM(Batt.Name); //shut it down
+		if (Battcpy.Voltage <= 2800)
 		{
-			Batt.dutyCycle -= 5; //see above
+			Battcpy.Failed = true; //if the voltage gets this low, then something is wrong
 		}
-
-		setDutyCycle(Battcpy.Name, Battcpy.dutyCycle);
-		Waitfor(2); //wait for 2 ms, should be good. Might want to change wait to be triggered on clk pulse
+		else
+		{
+			Battcpy.Status |= (1 << CCDONE);
+			//do something to save time here
+		}
+		break; //should break from loop
 	}
-	return Battcpy;
+
+	else if (Battcpy.Current < 10000)
+	{ //10A in 3 point fixed decimal, can be subbed with a variable if needed
+		Batt.dutyCycle += 5; //magic number controlling how much change to the duty cycle is going to be needed
+	}
+	else if (Battcpy.Current > 10000)
+	{
+		Batt.dutyCycle -= 5; //see above
+	}
+
+	setDutyCycle(Battcpy.Name, Battcpy.dutyCycle);
+	Waitfor(2); //wait for 2 ms, should be good. Might want to change wait to be triggered on clk pulse
+}
+return Battcpy;
 }
 
 struct Battery discharge30W(struct Battery Batt, uint16_t vStop)
 { //batt refers to which battery to enable
-	struct Battery Battcpy = Batt;
-	uint32_t power;
-	for (uint8_t i = 0; i < 4; i++)
-	{ //this number needs to be decided
-		Battcpy.Voltage = readVoltage(vChannel);
-		Battcpy.Current = readCurrent(iChannel, Disc_Sense_Resistance);
-		power = Battcpy.Voltage * Battcpy.Current;
-		if ((Battcpy.Voltage <= 2800))
-		{ //exit CP is done when voltage is <= 2.8V
-			turnOffPWM(Batt.Name); //shut it down
-			Batt.Status |= (1 << CPDONE);
-			break; //should break from loop
-		}
-		else if (power < 30 * 1000)
-		{ //30W in 3 point fixed decimal, can be subbed with a variable if needed
-			Batt.dutyCycle += 5; //magic number controlling how much change to the duty cycle is going to be needed
-		}
-		else if (power > 30 * 1000)
-		{
-			Batt.dutyCycle -= 5; //see above
-		}
-
-		setDutyCycle(Battcpy.Name, Batt.dutyCycle);
-		Waitfor(2); //wait for 2 ms, should be good. Might want to change wait to be triggered on clk pulse
+struct Battery Battcpy = Batt;
+uint32_t power;
+for (uint8_t i = 0; i < 4; i++)
+{ //this number needs to be decided
+	Battcpy.Voltage = readVoltage(vChannel);
+	Battcpy.Current = readCurrent(iChannel, Disc_Sense_Resistance);
+	power = Battcpy.Voltage * Battcpy.Current;
+	if ((Battcpy.Voltage <= 2800))
+	{ //exit CP is done when voltage is <= 2.8V
+		turnOffPWM(Batt.Name); //shut it down
+		Batt.Status |= (1 << CPDONE);
+		break; //should break from loop
 	}
-	return Battcpy;
+	else if (power < 30 * 1000)
+	{ //30W in 3 point fixed decimal, can be subbed with a variable if needed
+		Batt.dutyCycle += 5; //magic number controlling how much change to the duty cycle is going to be needed
+	}
+	else if (power > 30 * 1000)
+	{
+		Batt.dutyCycle -= 5; //see above
+	}
+
+	setDutyCycle(Battcpy.Name, Batt.dutyCycle);
+	Waitfor(2); //wait for 2 ms, should be good. Might want to change wait to be triggered on clk pulse
+}
+return Battcpy;
 
 }
-
-struct Battery dischargeFull(struct Battery Batt, uint16_t vsStop){
-	struct Battery Battcpy = Batt;
-	uint32_t power;
-	for(uint8_t i = 0; i < 4; i ++){
+//use this if the above stuff doesn't work right
+struct Battery dischargeFull(struct Battery Batt, uint16_t vsStop)
+{
+struct Battery Battcpy = Batt;
+uint32_t power;
+for (uint8_t i = 0; i < 4; i++)
+{
 	Battcpy.Voltage = readVoltage(Battcpy.voltChannel);
 	Battcpy.Current = readCurrent(Battcpy.discChannel, Disc_Sense_Resistance);
-	power = ((((Battcpy.Voltage / 1000) * Battcpy.Current) / 1000) * Battcpy.dutyCycle);
-	if (Battcpy.Voltage <= 2800){
+	power = ((((Battcpy.Voltage / 1000) * Battcpy.Current) / 1000)
+			* Battcpy.dutyCycle);
+	if (Battcpy.Voltage <= 2800)
+	{
 		turnOffPWM(Batt.Name);
 		Batt.Status |= (1 << CPDONE); // this would have to be changed
 		break;
 	}
-	power = Battcpy.Voltage * Battcpy.Current;
-	else if()
+	else if (power <= 30 * 1000)
+	{
+		Batt.dutyCycle += 5;
 	}
+	else if(power >= 30 * 1000){
+		Batt.dutyCycle -= 5;
+	}
+	if(Batt.CPTime == 5){
+		//save current and voltage
+	}
+}
+return Battcpy;
 
 }
 uint16_t calcThermTemp(uint16_t rThermistor)
 {
-	float tThermistor;
-	float rThermFloat = rThermistor / 1000;
-	tThermistor = bThermistor / (log(rThermFloat / rinf));
-	return tThermistor;
+float tThermistor;
+float rThermFloat = rThermistor / 1000;
+tThermistor = bThermistor / (log(rThermFloat / rinf));
+return tThermistor;
 
 }
 
 void Initialize_PWM(void) //correct values for each register still need to be determined
 {
-	DDRD |= (1 << DISC_EN_1) | (1 << DISC_EN_2); 			//enables PWM pins
-	TCCR0A = 0b10100011; 		//timer set to fast pwm
-	TCCR0B = 0b00000011; 			//timer clk = system clk / 64;
+DDRD |= (1 << DISC_EN_1) | (1 << DISC_EN_2); 			//enables PWM pins
+TCCR0A = 0b10100011; 		//timer set to fast pwm
+TCCR0B = 0b00000011; 			//timer clk = system clk / 64;
 //outputs 16E6/64/255 = 980Hz PWM
 //consider increasing this value
 }
 
 void Initialize_ADCs(void) //correct values for each register still need to be determined
 {
-	ADCSRA = 0x87;	//Turn On ADC and set prescaler (CLK/128)
-	ADCSRB = 0x00;	//turn off autotrigger
-	ADMUX = 0x05;  //Set ADC channel ADC5(t_batt_1), set compare voltage to AVcc
-	DIDR0 = (1 << T_Batt_2) | (1 << T_Batt_1); // Turning off digital input for T_Batt_1 and 2
+ADCSRA = 0x87;	//Turn On ADC and set prescaler (CLK/128)
+ADCSRB = 0x00;	//turn off autotrigger
+ADMUX = 0x05;  //Set ADC channel ADC5(t_batt_1), set compare voltage to AVcc
+DIDR0 = (1 << T_Batt_2) | (1 << T_Batt_1); // Turning off digital input for T_Batt_1 and 2
 // T_Batt_3 and 4 do not require this as they are
 // ADC6 and ADC7
 }
@@ -403,18 +414,18 @@ void Initialize_ADCs(void) //correct values for each register still need to be d
 void configureGblClk(void)
 { //This function will set up the global clock
 
-	TCCR1A = 0x00; //set counter1 as normal timer
-	TCCR1B |= (1 << WGM12) | (1 << CS12); //set prescaler for clk/256 and operate on CTC mode
-	OCR1A = GBL_CLK_MAX_VAL; //precalculated number
+TCCR1A = 0x00; //set counter1 as normal timer
+TCCR1B |= (1 << WGM12) | (1 << CS12); //set prescaler for clk/256 and operate on CTC mode
+OCR1A = GBL_CLK_MAX_VAL; //precalculated number
 //OCR1A holds OCR1AL and OCR1AH
-	TIMSK1 = 0x01; //set interrupt on overflow
+TIMSK1 = 0x01; //set interrupt on overflow
 
 }
 
 void configureADCWaitClk(void)
 { // not sure exactly what to call this, but this loop dictates how long before taking an ADC measurement
-	TCCR2A = 0x00; //set counter1 as normal timer
-	TCCR2B |= (1 << CS22) | (1 << CS21); //set prescaler for 256
+TCCR2A = 0x00; //set counter1 as normal timer
+TCCR2B |= (1 << CS22) | (1 << CS21); //set prescaler for 256
 
 }
 
@@ -430,21 +441,23 @@ void configureADCWaitClk(void)
 //}
 //}
 
-struct Battery InitBattery(uint8_t voltPin,  uint8_t discPin, uint8_t chargePin, uint8_t Number){
-	struct Battery Batt;
-	Batt.Current = 0;
-	Batt.Temperature = 0;
-	Batt.Status = 0;
-	Batt.CCTime = 0;
-	Batt.CPTime = 0;
-	Batt.Name = Number;
-	Batt.dutyCycle = 0;
-	Batt.chargeChannel = chargePin;
-	Batt.discChannel = discPin;
-	Batt.voltChannel = voltPin;
-	Batt.Failed = false;
-	Batt.Voltage = readVoltage(Batt.voltChannel);
-	return Batt;
+struct Battery InitBattery(uint8_t voltPin, uint8_t discPin, uint8_t chargePin,
+	uint8_t Number)
+{
+struct Battery Batt;
+Batt.Current = 0;
+Batt.Temperature = 0;
+Batt.Status = 0;
+Batt.CCTime = 0;
+Batt.CPTime = 0;
+Batt.Name = Number;
+Batt.dutyCycle = 0;
+Batt.chargeChannel = chargePin;
+Batt.discChannel = discPin;
+Batt.voltChannel = voltPin;
+Batt.Failed = false;
+Batt.Voltage = readVoltage(Batt.voltChannel);
+return Batt;
 
 }
 //End Function Definitions
@@ -454,8 +467,8 @@ ISR(TIMER1_OVF_vect)
 { //I'm not sure if this is how this works
 //this functions works as a one second timer that causes the program to log data once a second
 
-	GblClk++; //one second has passed so add some time
-	newSec = true;
+GblClk++; //one second has passed so add some time
+newSec = true;
 }
 
 //End ISR Definitions
@@ -463,233 +476,159 @@ ISR(TIMER1_OVF_vect)
 //Begin Main
 int main()
 {
-	//create batteries
-	struct Battery Batt0 = InitBattery(Batt_Conn_1_1, I_Sense_1, Charge_Sense_1, 0);
-	struct Battery Batt1 = InitBattery(Batt_Conn_2_1, I_Sense_1, Charge_Sense_1, 1);
-	struct Battery Batt2 = InitBattery(Batt_Conn_1_2, I_Sense_2, Charge_Sense_2, 2);
-	struct Battery Batt3 = InitBattery(Batt_Conn_2_2, I_Sense_2, Charge_Sense_2, 3);
+//create batteries
+struct Battery Batt0 = InitBattery(Batt_Conn_1_1, I_Sense_1, Charge_Sense_1, 0);
+struct Battery Batt1 = InitBattery(Batt_Conn_2_1, I_Sense_1, Charge_Sense_1, 1);
+struct Battery Batt2 = InitBattery(Batt_Conn_1_2, I_Sense_2, Charge_Sense_2, 2);
+struct Battery Batt3 = InitBattery(Batt_Conn_2_2, I_Sense_2, Charge_Sense_2, 3);
 //log data on startup
-	newSec = true;
+newSec = true;
 
-	//Declaration of Outputs and Inputs
-	DDRC |= (1 << BATT_EN_2_2) | (1 << DISC_EN_2) | (1 << BATT_EN_1_1)
-			| (1 << CHARGE_2_2);
-	DDRD &= ~(1 << RX);
-	DDRB &= ~((1 << MISO) | (1 << XTAL1) | (1 << XTAL2));
-	//Initialization of Communication Protocols
-	Initialize_ADCs();
-	Initialize_PWM();
-	Serial1.begin(57600); //Initialize UART1
-	Initialize_SPI_Master(CS0);
-	//set up counters and clocks
-	configureGblClk();
-	configureADCWaitClk();
-	sei();
-	//enable gbl interrupts
-	//start with a few initial values
-	GblClk = 0; //initialize GblClk to be 0
+//Declaration of Outputs and Inputs
+DDRC |= (1 << BATT_EN_2_2) | (1 << DISC_EN_2) | (1 << BATT_EN_1_1)
+		| (1 << CHARGE_2_2);
+DDRD &= ~(1 << RX);
+DDRB &= ~((1 << MISO) | (1 << XTAL1) | (1 << XTAL2));
+//Initialization of Communication Protocols
+Initialize_ADCs();
+Initialize_PWM();
+Serial1.begin(57600); //Initialize UART1
+Initialize_SPI_Master(CS0);
+//set up counters and clocks
+configureGblClk();
+configureADCWaitClk();
+sei();
+//enable gbl interrupts
+//start with a few initial values
+GblClk = 0; //initialize GblClk to be 0
 
-	while (1)
-	{ //main loop
-	  //batteries 0 and 1
-		if (!(Batt0.Failed || Batt1.Failed || Batt2.Failed || Batt3.Failed)) //make sure none of the batteries failed
+while (1)
+{ //main loop
+//batteries 0 and 1
+	if (!(Batt0.Failed || Batt1.Failed || Batt2.Failed || Batt3.Failed)) //make sure none of the batteries failed
+	{
+		if ((Batt0.Status & (1 << ALLDONE)) && (Batt1.Status & (1 << WAITING))) //if Batt0 is done testing and Batt1 is waiting to be tested, start testing
 		{
-			if ((Batt0.Status & (1 << ALLDONE))
-					&& (Batt1.Status & (1 << WAITING))) //if Batt0 is done testing and Batt1 is waiting to be tested, start testing
-			{
 //above bool states that if you're not doing a test, are fully charged, completely done testing and not waiting for another batteries test
-				Batt1.Status &= ~(1 << WAITING); //stop Batt1 from waiting
-				Batt0.Status |= (1 << WAITING); //make Batt0 to wait(ensuring that case where Batt0 and Batt1 are both not waiting doesn't happen
+			Batt1.Status &= ~(1 << WAITING); //stop Batt1 from waiting
+			Batt0.Status |= (1 << WAITING); //make Batt0 to wait(ensuring that case where Batt0 and Batt1 are both not waiting doesn't happen
+			PORTC &= ~(1 << BATT_EN_1_1);
+			PORTD |= (1 << BATT_EN_2_1); //swap battery enables
+		}
+		else if (!(Batt0.Status & ((1 << CCIP) | (1 << CPIP) | (1 << WAITING) | (1 << ALLDONE)))){
+			//charge if not in a test, waiting or completely done
+			turnOffPWM(DISC_EN_1); //shut down PWM
+			if (Batt0.Status & (1 << CCDONE)){
+				Charge; //charge to 4.2V
 			}
-
-			else if (!(Batt0.Status & (1 << WAITING))
-					&& !(Batt0.Status & (1 << CCDONE)))
-			{ //check to make sure not waiting on other battery
-//Constant Current
-				if (!(Batt0.Status & (1 << CCIP)))
-				{
-					dutyCycle0 = CCDutyStartVal; //start with a duty cycle close to what CC needs it to be
-					Batt0.Status |= (1 << CCIP);
-				}
-				discharge10A (BATT0);
-				if (dutyCycle0 == 0)
-				{
-					Batt0.Status |= (1 << CCDONE); //turn on CCDONE flag
-					Batt0.Status &= ~(1 << CCIP); //turn off CCIP flag
-				}
-			}
-
-			else if (!(Batt0.Status & (1 << WAITING))
-					&& !(Batt0.Status & (1 << CPDONE)))
-			{
-//Constant Power Discharge
-				if (!(Batt0.Status & (1 << CPIP)))
-				{
-					dutyCycle0 = CPDutyStartVal;
-					Batt0.Status |= (1 << CPIP);
-				}
-				discharge30W (BATT0);
-				if (dutyCycle0 == 0)
-				{
-					Batt0.Status |= (1 << CPDONE);
-					Batt0.Status &= ~(1 << CPIP);
-				}
-			}
-
-			else if ((Batt1.Status == 0) || (Batt1.Status & (1 << CHARGING)))
-			{ //start charging or continue charging
-//charging
-				charge (BATT1);
-			}
-
-			else if (!(Batt1.Status & (1 << WAITING))
-					&& !(Batt1.Status & (1 << CCDONE)))
-			{ //check to make sure not waiting on other battery
-//Constant Current
-				if (!(Batt1.Status & (1 << CCIP)))
-				{
-					dutyCycle0 = CCDutyStartVal; //start with a duty cycle close to what CC needs it to be
-					Batt1.Status |= (1 << CCIP);
-				}
-				discharge10A (BATT1);
-				if (dutyCycle0 == 0)
-				{
-					Batt1.Status |= (1 << CCDONE); //turn on CCDONE flag
-					Batt1.Status &= ~(1 << CCIP); //turn off CCIP flag
-				}
-			}
-
-			else if (!(Batt1.Status & (1 << WAITING))
-					&& !(Batt1.Status & (1 << CPDONE)))
-			{
-//Constant Power Discharge
-				if (!(Batt1.Status & (1 << CPIP)))
-				{
-					dutyCycle0 = CPDutyStartVal;
-					Batt1.Status |= (1 << CPIP);
-				}
-				discharge30W (BATT1);
-				if (dutyCycle0 == 0)
-				{
-					Batt1.Status |= (1 << CPDONE);
-					Batt1.Status &= ~(1 << CPIP);
-				}
-			}
-
-//batteries 2 and 3
-			if ((Batt2.Status == 0) || (Batt2.Status & (1 << CHARGING)))
-			{ //start charging or continue charging
-//charging
-				charge (BATT2);
-			}
-
-			else if (!(Batt2.Status & (1 << WAITING))
-					&& !(Batt2.Status & (1 << CCDONE)))
-			{ //check to make sure not waiting on other battery
-//Constant Current
-				discharge10A (BATT2);
-			}
-
-			else if (!(Batt2.Status & (1 << WAITING))
-					&& !(Batt2.Status & (1 << CPDONE)))
-			{
-//Constant Power Discharge
-				discharge30W (BATT2);
-			}
-
-			else if ((Batt3.Status == 0) || (Batt3.Status & (1 << CHARGING)))
-			{ //start charging or continue charging
-//charging
-				charge (BATT3);
-			}
-
-			else if (!(Batt3.Status & (1 << WAITING))
-					&& !(Batt3.Status & (1 << CCDONE)))
-			{ //check to make sure not waiting on other battery
-//Constant Current
-				discharge10A (BATT3);
-			}
-
-			else if (!(Batt3.Status & (1 << WAITING))
-					&& !(Batt3.Status & (1 << CPDONE)))
-			{
-//Constant Power Discharge
-				discharge30W (BATT3);
-			}
-
-			else
-			{
-
+			else if(Batt0.Status & (1 << CPDONE)){
+				Charge; //Charge to storage
 			}
 		}
-		else
+		else if (!(Batt0.Status & (1 << WAITING))
+				&& !(Batt0.Status & (1 << CCDONE)))
+		{ //check to make sure not waiting on other battery
+//Constant Current
+			if (!(Batt0.Status & (1 << CCIP)))
+			{
+				dutyCycle0 = CCDutyStartVal; //start with a duty cycle close to what CC needs it to be
+				Batt0.Status |= (1 << CCIP);
+			}
+			discharge10A (BATT0);
+			if (dutyCycle0 == 0)
+			{
+				Batt0.Status |= (1 << CCDONE); //turn on CCDONE flag
+				Batt0.Status &= ~(1 << CCIP); //turn off CCIP flag
+			}
+		}
+
+		else if (!(Batt0.Status & (1 << WAITING))
+				&& !(Batt0.Status & (1 << CPDONE)))
 		{
-			//say failed or something
+//Constant Power Discharge
+			if (!(Batt0.Status & (1 << CPIP)))
+			{
+				dutyCycle0 = CPDutyStartVal;
+				Batt0.Status |= (1 << CPIP);
+			}
+			discharge30W (BATT0);
+			if (dutyCycle0 == 0)
+			{
+				Batt0.Status |= (1 << CPDONE);
+				Batt0.Status &= ~(1 << CPIP);
+			}
 		}
-		if (newSec || (/*add code to force a log if a CC test finished. Don't care about CP test finishes*/))
-		{ //only measure temperature once a second
-			Batt0.Temperature = readBattTemp(T_Batt_1);
-			Batt1.Temperature = readBattTemp(T_Batt_2);
-			Batt2.Temperature = readBattTemp(T_Batt_3);
-			Batt3.Temperature = readBattTemp(T_Batt_4);
-			if (Batt0.Temperature >= tCutoff)
-			{
-				Batt0.Failed = true; //end testing
-			}
-			if (Batt1.Temperature >= tCutoff)
-			{
-				Batt1.Failed = true; //end testing
-			}
-			if (Batt2.Temperature >= tCutoff)
-			{
-				Batt2.Failed = true; //end testing
-			}
-			if (Batt3.Temperature >= tCutoff)
-			{
-				Batt3.Failed = true; //end testing
-			}
 
-			//incrementing Time. As mentioned before, there's probably a better way to do this
-			if (Batt0.Status & (1 << CCIP))
-			{ //If you're in a CC test, increment this counter
-				Batt0.CCTime++;
-			}
-			else if (Batt0.Status & (1 << CPIP))
-			{ //If you're in a CP test, increment this counter
-				Batt0.CPTime++;
-			}
 
-			if (Batt1.Status & (1 << CCIP))
-			{
-				Batt1.CCTime++;
-			}
-			else if (Batt1.Status & (1 << CPIP))
-			{
-				Batt1.CPTime++;
-			}
-
-			if (Batt2.Status & (1 << CCIP))
-			{
-				Batt2.CCTime++;
-			}
-			else if (Batt2.Status & (1 << CPIP))
-			{
-				Batt2.CPTime++;
-			}
-
-			if (Batt3.Status & (1 << CCIP))
-			{
-				Batt3.CCTime++;
-			}
-			else if (Batt3.Status & (1 << CPIP))
-			{
-				Batt3.CPTime++;
-			}
-			logBattery(/*stuff*/); //this is where the battery data should be logged
-
-			newSec = false;
-
-		}
 	}
-	return 1;
+	else
+	{
+		//say failed or something
+	}
+	if (newSec || (/*add code to force a log if a CC test finished. Don't care about CP test finishes*/))
+	{ //only measure temperature once a second
+		Batt0.Temperature = readBattTemp(T_Batt_1);
+		Batt1.Temperature = readBattTemp(T_Batt_2);
+		Batt2.Temperature = readBattTemp(T_Batt_3);
+		Batt3.Temperature = readBattTemp(T_Batt_4);
+		if (Batt0.Temperature >= tCutoff)
+		{
+			Batt0.Failed = true; //end testing
+		}
+		if (Batt1.Temperature >= tCutoff)
+		{
+			Batt1.Failed = true; //end testing
+		}
+		if (Batt2.Temperature >= tCutoff)
+		{
+			Batt2.Failed = true; //end testing
+		}
+		if (Batt3.Temperature >= tCutoff)
+		{
+			Batt3.Failed = true; //end testing
+		}
+
+		//incrementing Time. As mentioned before, there's probably a better way to do this
+		if (Batt0.Status & (1 << CCIP))
+		{ //If you're in a CC test, increment this counter
+			Batt0.CCTime++;
+		}
+		else if (Batt0.Status & (1 << CPIP))
+		{ //If you're in a CP test, increment this counter
+			Batt0.CPTime++;
+		}
+
+		if (Batt1.Status & (1 << CCIP))
+		{
+			Batt1.CCTime++;
+		}
+		else if (Batt1.Status & (1 << CPIP))
+		{
+			Batt1.CPTime++;
+		}
+
+		if (Batt2.Status & (1 << CCIP))
+		{
+			Batt2.CCTime++;
+		}
+		else if (Batt2.Status & (1 << CPIP))
+		{
+			Batt2.CPTime++;
+		}
+
+		if (Batt3.Status & (1 << CCIP))
+		{
+			Batt3.CCTime++;
+		}
+		else if (Batt3.Status & (1 << CPIP))
+		{
+			Batt3.CPTime++;
+		}
+		logBattery(/*stuff*/); //this is where the battery data should be logged
+
+		newSec = false;
+
+	}
+}
+return 1;
 }

@@ -23,13 +23,11 @@ void turnOffPWM(uint8_t Channel) {
 
 	if (Channel == PD5) {
 
-		OCR0A = 0; //set duty cycle to 0
 		TCCR0A &= ~((1 << COM0A1) | (1 << COM0A0)); //disable OCR0A
 	}
 
 	else if (Channel == PD6) {
 
-		OCR0B = 0;
 		TCCR0A &= ~((1 << COM0B1) | (1 << COM0B0)); //See Above comments
 	}
 }
