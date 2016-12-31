@@ -72,6 +72,10 @@ const uint8_t CS0 = 2;
 #define Charge				1
 #define Discharge			0
 #define TESTSTARTVOLTAGE	4100
+#define VSTORAGE			3650 //storage voltage
+#define VFULLCHARGE			4200 //fully charged voltage
+#define ICHARGEDONE			100 //current to stop charge
+#define ICHARGESTART		1500 //current charge starts at
 //voltage to overcharge to when targetting a voltage less than 4.2
 //hopefully this will make an uint16_t num, but unsure
 #define NUMSAMPLES				5 //not sure how many samples yet
@@ -229,16 +233,13 @@ return (vBatt * vRef3FixedPoint) / MAX12B; //scaled to 3 decimal place fixed poi
  }
  */
 
-struct Battery charge(struct Battery Batt, uint16_t vStop, uint16_t iStop)
+struct Battery chargeBatt(struct Battery Batt, uint16_t vStop, uint16_t iStop)
 { // batt refers to which battery to enable. vstop refers to what voltage to start checking Istop at, or when to cutoff if vstop is not 4.2V. Istop refers to what current to stop charging at
 //BattStatusPtr, points to the status register of the specific battery
 struct Battery Battcpy = Batt; //copy Batt
 if (Battcpy.Name == 0)
 {
-	PORTB |= (1 << CHARGE_EN_1) | (1 << CHARGE_1_1); //enable charger and charging mosfet
-	PORTC &= ~(1 << CHARGE_2_1); //make sure not charging two batteries at once(could lead to short between batteries
-	PORTC |= (1 << BATT_EN_1_1); //open connection to battery
-								 //two separate battery enables to take advantage of body diodes, see EAGLE schematic
+
 }
 
 else if (Battcpy.Name == 1)
@@ -276,6 +277,7 @@ if ((Battcpy.Voltage >= vStop + OVERCHARGEVOLTAGE) && (vStop != 4200)) //when vB
 }
 else if (Battcpy.Current <= iStop)
 {
+	Battcpy.Status = 0; //clear all previous states
 	Battcpy.Status |= (1 << ALLDONE); //if it makes it here, then the battery is done charging.
 	//A battery must have been CC and CP discharges and recharged to a storage voltage
 }
@@ -501,6 +503,15 @@ sei();
 //enable gbl interrupts
 //start with a few initial values
 GblClk = 0; //initialize GblClk to be 0
+//start with Batt0 and Batt2 enables
+Batt0.Status &= ~(1 << WAITING);
+Batt1.Status |= (1 << WAITING);
+Batt2.Status &= (1 << WAITING);
+Batt3.Status |= (1 << WAITING);
+PORTC |= (1 << BATT_EN_1_1);
+PORTD &= ~(1 << BATT_EN_2_1);
+PORTD |= (1 << BATT_EN_1_2);
+PORTC &= ~(1 << BATT_EN_2_2);
 
 while (1)
 { //main loop
@@ -515,14 +526,18 @@ while (1)
 			PORTC &= ~(1 << BATT_EN_1_1);
 			PORTD |= (1 << BATT_EN_2_1); //swap battery enables
 		}
-		else if (!(Batt0.Status & ((1 << CCIP) | (1 << CPIP) | (1 << WAITING) | (1 << ALLDONE)))){
+		else if (!(Batt0.Status & ((1 << FULLCHARGED) | (1 << CCIP) | (1 << CPIP) | (1 << WAITING) | (1 << ALLDONE)))){
 			//charge if not in a test, waiting or completely done
 			turnOffPWM(DISC_EN_1); //shut down PWM
+			PORTB |= (1 << CHARGE_EN_1) | (1 << CHARGE_1_1); //enable charger and charging mosfet
+			PORTC &= ~(1 << CHARGE_2_1); //make sure not charging two batteries at once(could lead to short between batteries
+			PORTC |= (1 << BATT_EN_1_1); //open connection to battery
+										 //two separate battery enables to take advantage of body diodes, see EAGLE schematic
 			if (Batt0.Status & (1 << CCDONE)){
-				Charge; //charge to 4.2V
+				Batt0 = chargeBatt(Batt0,VFULLCHARGE, ICHARGEDONE); //charge to 4.2V
 			}
 			else if(Batt0.Status & (1 << CPDONE)){
-				Charge; //Charge to storage
+				Batt0 = chargeBatt(Batt0,VSTORAGE, ICHARGESTART); //Charge to storage
 			}
 		}
 		else if (!(Batt0.Status & (1 << WAITING))
