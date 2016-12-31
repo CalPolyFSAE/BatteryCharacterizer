@@ -151,7 +151,6 @@ struct Battery
 	uint32_t Current; //3 point fixed decimal
 	uint32_t Temperature; //2 point fixed decimal
 	uint8_t Status; //current status of Battery
-	uint8_t CCTime;
 	uint16_t CPTime; //maybe would be nice if I didn't need this to reduce struct size
 	uint8_t Name; //lets function know which structure has been passed to it
 	bool Failed;
@@ -159,17 +158,17 @@ struct Battery
 
 //Begin Function Definitions
 
-//uint16_t read_MCU_ADC(uint8_t T_Batt){
-//	uint16_t ADCvoltage;
-//	ADMUX &= 11111000; //clearing mux
-//	ADMUX |= T_Batt; //setting muc channel to correct pin
-//	ADCSRA |= (1 << ADSC); //starting conversion
-//	while (!(ADCSRA & (1 << ADIF))); //waiting until interrupt flag triggers
-//	ADCSRA |= (1 << ADSC); //clearing interrupt flag(writing to flag resets flag)
-//	ADCvoltage = (ADCH << 8) | ADCL; //returning ADC voltage
-//
-//	return ADCvoltage;
-//}
+uint16_t read_MCU_ADC(uint8_t T_Batt){ //using this instead of analogRead because analogRead uses some weird pin conversion stuff
+	uint16_t ADCvoltage;
+	ADMUX &= 11111000; //clearing mux
+	ADMUX |= T_Batt; //setting muc channel to correct pin
+	ADCSRA |= (1 << ADSC); //starting conversion
+	while (!(ADCSRA & (1 << ADIF))); //waiting until interrupt flag triggers
+	ADCSRA |= (1 << ADSC); //clearing interrupt flag(writing to flag resets flag)
+	ADCvoltage = ADC; //returning ADC voltage
+
+	return ADCvoltage;
+}
 void Waitfor(uint8_t millis)
 {
 	//wait for some time in milliseconds, basically delay()
@@ -184,7 +183,7 @@ void Waitfor(uint8_t millis)
 uint32_t readBattTemp(uint8_t Batt)
 {
 	uint32_t vThermistor;
-	vThermistor = (analogRead(Batt) * vRef2FixedPoint) / MAX12B; //may need to ditch analogRead, also converting to Fixed math with 2 decimal points
+	vThermistor = (read_MCU_ADC(Batt) * vRef2FixedPoint) / MAX12B; //may need to ditch analogRead, also converting to Fixed math with 2 decimal points
 	return (((rSeriesFixedPoint * vRef2FixedPoint) / vThermistor)
 			- rSeriesFixedPoint); //returning resistance of Thermistor
 }
@@ -291,10 +290,12 @@ struct Battery discharge10A(struct Battery Batt, uint8_t duty_cycle,
 	{ //this number needs to be decided
 		Battcpy.Voltage = readVoltage(vChannel);
 		Battcpy.Current = readCurrent(iChannel, Disc_Sense_Resistance);
-		if (Battcpy.Voltage <= 2800)
+		if ((Battcpy.Voltage <= 2800) || (Battcpy.CCTime >= 5))
 		{ //exit CC discharge if voltage gets too low. Cutoff is 2.8V
 			turnOffPWM(Batt.Name); //shut it down
+			if(Battcpy.Voltage <= 2800){
 			Battcpy.Failed = true; //if the voltage gets this low, then something is wrong
+			}
 			break; //should break from loop
 		}
 		else if (Battcpy.CCTime >= 5){ //after 5 seconds, end the test
@@ -370,14 +371,6 @@ uint16_t calcThermTemp(uint16_t rThermistor)
 
 }
 
-void logBattery(struct Battery Batt)
-{ //sends data to computer via usb through ftdi chip with uart
-	uint16_t voltage, current, temperature;
-	float16(&voltage, (float(Batt.Voltage) / 1000));
-	float16(&current, (float(Batt.Current) / 1000));
-	float16(&temperature, float(calcThermTemp(Batt.Temperature)));
-	Serial1.write(voltage); //this is wrong, but need to get the point across
-}
 
 void Initialize_PWM(void) //correct values for each register still need to be determined
 {
@@ -658,10 +651,10 @@ if (readTemp || (/*add code to force a log if a CC test finished. Don't care abo
 	}
 
 	//incrementing Time. As mentioned before, there's probably a better way to do this
-	if(Batt0.Status & (1 << CCIP)){
+	if(Batt0.Status & (1 << CCIP)){ //If you're in a CC test, increment this counter
 		Batt0.CCTime ++;
 	}
-	else if (Batt0.Status & (1 << CPIP)){
+	else if (Batt0.Status & (1 << CPIP)){//If you're in a CP test, increment this counter
 		Batt0.CPTime ++;
 	}
 
