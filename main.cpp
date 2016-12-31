@@ -521,7 +521,6 @@ PORTD &= ~(1 << BATT_EN_2_1);
 PORTD |= (1 << BATT_EN_1_2);
 PORTC &= ~(1 << BATT_EN_2_2);
 
-
 while (1)
 { //main loop
 //batteries 0 and 1
@@ -565,7 +564,7 @@ while (1)
 				Batt0.dutyCycle = CCDutyStartVal; //start with a duty cycle close to what CC needs it to be
 				Batt0.Status |= (1 << CCIP);
 			}
-			Batt0 = discharge10A (Batt0);
+			Batt0 = discharge10A(Batt0);
 		}
 
 		else if (!(Batt0.Status & (1 << WAITING))
