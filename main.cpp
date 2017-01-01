@@ -185,8 +185,10 @@ void Waitfor(uint8_t millis)
 	TCNT2 = 0;
 	for (uint8_t i = 0; i < millis; i++)
 	{
-		while (TCNT2 <= WaitClkCutoff)
-			; //wait
+//		while (TCNT2 <= WaitClkCutoff) //use this to wait for 2ms
+//			; //wait
+		while (TCNT0 <= 1)
+			; //use this to wait until next pwm cycle starts
 	}
 }
 
@@ -246,9 +248,10 @@ struct Battery chargeBatt(struct Battery Batt, uint16_t vStop, uint16_t iStop)
 
 	}
 //start charging
-	Waitfor(2); //wait for 2ms
+	Waitfor(4); //wait for 4 pwm pulses(~4ms)
 	Battcpy.Voltage = readVoltage(Battcpy.voltChannel);
-	Battcpy.Current = readCurrent(Battcpy.chargeChannel, Charge_Sense_Resistance);
+	Battcpy.Current = readCurrent(Battcpy.chargeChannel,
+	Charge_Sense_Resistance);
 	if ((Battcpy.Voltage >= vStop + OVERCHARGEVOLTAGE) && (vStop != 4200)) //when vBatt is above
 	{
 		Battcpy.Status |= (1 << FULLCHARGED);
@@ -299,7 +302,7 @@ struct Battery discharge10A(struct Battery Batt) //maybe switch dutyCycle to a p
 		}
 
 		setDutyCycle(Battcpy.Name, Battcpy.dutyCycle);
-		Waitfor(2); //wait for 2 ms, should be good. Might want to change wait to be triggered on clk pulse
+		Waitfor(1); //wait for 1 PWM pulse
 	}
 	return Battcpy;
 }
@@ -331,7 +334,7 @@ struct Battery discharge30W(struct Battery Batt, uint16_t vStop)
 		}
 
 		setDutyCycle(Battcpy.Name, Batt.dutyCycle);
-		Waitfor(2); //wait for 2 ms, should be good. Might want to change wait to be triggered on clk pulse
+		Waitfor(1); //wait for 1 PWM pulse
 	}
 	return Battcpy;
 
@@ -471,213 +474,231 @@ int main()
 	GblClk = 0; //initialize GblClk to be 0
 
 //start with Batt0 and Batt2 enabled
-	Batt0.Status &= ~(1 << WAITING);
-	Batt1.Status |= (1 << WAITING);
-	Batt2.Status &= (1 << WAITING);
-	Batt3.Status |= (1 << WAITING);
-	PORTC |= (1 << BATT_EN_1_1);
-	PORTD &= ~(1 << BATT_EN_2_1);
-	PORTD |= (1 << BATT_EN_1_2);
-	PORTC &= ~(1 << BATT_EN_2_2);
 
-	while (!(Batt0.Failed || Batt1.Failed || Batt2.Failed || Batt3.Failed))
-	{ //main loop
-	  //Batteries 0 and 1
-	  //-----------------------------------------------------------------------
-	  //Batt0
+	while (1)
+	{
+		Batt0.Status &= ~(1 << WAITING);
+		Batt1.Status |= (1 << WAITING);
+		Batt2.Status &= (1 << WAITING);
+		Batt3.Status |= (1 << WAITING);
+		PORTC |= (1 << BATT_EN_1_1);
+		PORTD &= ~(1 << BATT_EN_2_1);
+		PORTD |= (1 << BATT_EN_1_2);
+		PORTC &= ~(1 << BATT_EN_2_2);
+		turnOffPWM(DISC_EN_1);
+		turnOffPWM(DISC_EN_2);
+		while ((!(Batt0.Failed || Batt1.Failed || Batt2.Failed || Batt3.Failed))
+				&& !((Batt0.Status & (1 << ALLDONE))
+						&& (Batt1.Status & (1 << ALLDONE))
+						&& (Batt2.Status & (1 << ALLDONE))
+						&& (Batt3.Status & (1 << ALLDONE)))) //stay in this loop until all batteries are tested
+		{ //main loop
+		  //Batteries 0 and 1
+		  //-----------------------------------------------------------------------
+		  //Batt0
 
-		//Charge Batt0
-		if ((Batt0.Status & (1 << CHARGING))
-				|| !(Batt0.Status
-						& ((1 << FULLCHARGED) | (1 << CCIP) | (1 << CPIP)
-								| (1 << WAITING) | (1 << ALLDONE))))
-		{
-			//charge if not in a test, waiting or completely done
-			if (!(Batt0.Status & (1 << CHARGING)))
+			//Charge Batt0
+			if ((Batt0.Status & (1 << CHARGING))
+					|| !(Batt0.Status
+							& ((1 << FULLCHARGED) | (1 << CCIP) | (1 << CPIP)
+									| (1 << WAITING) | (1 << ALLDONE))))
 			{
-				turnOffPWM(DISC_EN_1);			//shut down PWM
-				PORTB |= (1 << CHARGE_EN_1) | (1 << CHARGE_1_1);//enable charger and charging mosfet
-				PORTC &= ~(1 << CHARGE_2_1);//make sure not charging two batteries at once(could lead to short between batteries
-				PORTC |= (1 << BATT_EN_1_1);		//open connection to battery
-				Batt0.Status |= (1 << CHARGING);	//two separate battery enables to take advantage of body diodes, see EAGLE schematic
+				//charge if not in a test, waiting or completely done
+				if (!(Batt0.Status & (1 << CHARGING)))
+				{
+					turnOffPWM(DISC_EN_1);			//shut down PWM
+					PORTB |= (1 << CHARGE_EN_1) | (1 << CHARGE_1_1);//enable charger and charging mosfet
+					PORTC &= ~(1 << CHARGE_2_1);//make sure not charging two batteries at once(could lead to short between batteries
+					PORTC |= (1 << BATT_EN_1_1);	//open connection to battery
+					Batt0.Status |= (1 << CHARGING);//two separate battery enables to take advantage of body diodes, see EAGLE schematic
+				}
+				if (Batt0.Status & (1 << CCDONE))
+				{
+					Batt0 = chargeBatt(Batt0, VFULLCHARGE, ICHARGEDONE); //charge to 4.2V
+				}
+				else if (Batt0.Status & (1 << CPDONE))
+				{
+					Batt0 = chargeBatt(Batt0, VSTORAGE, ICHARGESTART); //Charge to storage
+				}
+				if ((Batt0.Status & (1 << FULLCHARGED))
+						|| (Batt0.Status & (1 << ALLDONE)))
+				{ //if charging is done, shutoff
+					PORTB &= ~((1 << CHARGE_EN_1) || (1 << CHARGE_1_1)); //shut off charging
+					Batt0.Status &= (1 << CHARGING); //turn of charging flag
+				}
 			}
-			if (Batt0.Status & (1 << CCDONE))
-			{
-				Batt0 = chargeBatt(Batt0, VFULLCHARGE, ICHARGEDONE); //charge to 4.2V
-			}
-			else if (Batt0.Status & (1 << CPDONE))
-			{
-				Batt0 = chargeBatt(Batt0, VSTORAGE, ICHARGESTART); //Charge to storage
-			}
-			if((Batt0.Status & (1 << FULLCHARGED)) || (Batt0.Status & (1 << ALLDONE))){ //if charging is done, shutoff
-				PORTB &= ~((1 << CHARGE_EN_1) || (1 << CHARGE_1_1)); //shut off charging
-				Batt0.Status &= (1 << CHARGING); //turn of charging flag
-			}
-		}
 
-		//Constant Current discharge Batt 0
-		else if ((Batt0.Status & (1 << CCIP))
-				|| !(Batt0.Status & ((1 << WAITING) | (1 << CCDONE))))
-		{ //check to make sure not waiting on other battery and not done CC
-
-			if (!(Batt0.Status & (1 << CCIP)))
-			{
-				Batt0.dutyCycle = CCDutyStartVal; //start with a duty cycle close to what CC needs it to be
-				Batt0.Status |= (1 << CCIP); //turn on constant current flag
-				Batt0.Status &= ~(1 << FULLCHARGED); //turn off full charged flag
-			}
-			Batt0 = discharge10A(Batt0);
-		}
-
-		else if ((Batt0.Status & (1 << CPIP))
-				|| !(Batt0.Status & ((1 << WAITING) | (1 << CPDONE))))
-		{
-			//Constant Power Discharge
-			if (!(Batt0.Status & (1 << CPIP)))
-			{
-				Batt0.dutyCycle = CPDutyStartVal;
-				Batt0.Status |= (1 << CPIP);
-				Batt0.Status &= (1 << FULLCHARGED);
-			}
-			Batt0 = discharge30W(Batt0, STOPVOLTAGE);
-		}
-		//End Batt 0
-		//---------------------------------------------------------------
-		//Batt 1
-		//Charge Batt1
-		else if ((Batt1.Status & (1 << CHARGING))
-				|| !(Batt1.Status
-						& ((1 << FULLCHARGED) | (1 << CCIP) | (1 << CPIP)
-								| (1 << WAITING) | (1 << ALLDONE))))
-		{
-			//charge if not in a test, waiting or completely done
-			if (!(Batt1.Status & (1 << CHARGING))) //If charging is not on, then turn it one
-			{
-				turnOffPWM(DISC_EN_1);			//shut down PWM
-				PORTB |= (1 << CHARGE_EN_1);			//turn on charger
-				PORTB &= ~(1 << CHARGE_1_1);//double check that other charging mosfet is off
-				PORTC |= ((1 << CHARGE_2_1) | (1 << BATT_EN_1_1));//enable charging mosfet and make sure batt enable is on(should be by default)
-				Batt1.Status |= CHARGING;
-			}
-			if (Batt1.Status & (1 << CCDONE))
-			{
-				Batt1 = chargeBatt(Batt1, VFULLCHARGE, ICHARGEDONE); //charge to 4.2V
-			}
-			else if (Batt1.Status & (1 << CPDONE))
-			{
-				Batt1 = chargeBatt(Batt1, VSTORAGE, ICHARGESTART); //Charge to storage
-			}
-			if ((Batt1.Status &(1 << FULLCHARGED)) || (Batt1.Status & (1 << ALLDONE))){
-				Batt1.Status &= ~(1 << FULLCHARGED);
-				PORTB &= ~(1 << CHARGE_EN_1);
-				PORTC &= ~(1 << CHARGE_2_1);
-			}
-			//CC Disc Batt 0
-			else if ((Batt1.Status & (1 << CCIP))
-					|| !(Batt1.Status & ((1 << WAITING) | (1 << CCDONE))))
+			//Constant Current discharge Batt 0
+			else if ((Batt0.Status & (1 << CCIP))
+					|| !(Batt0.Status & ((1 << WAITING) | (1 << CCDONE))))
 			{ //check to make sure not waiting on other battery and not done CC
-			  //Constant Current
-				if (!(Batt1.Status & (1 << CCIP)))
+
+				if (!(Batt0.Status & (1 << CCIP)))
 				{
-					Batt1.dutyCycle = CCDutyStartVal; //start with a duty cycle close to what CC needs it to be
-					Batt1.Status |= (1 << CCIP);
+					Batt0.dutyCycle = CCDutyStartVal; //start with a duty cycle close to what CC needs it to be
+					Batt0.Status |= (1 << CCIP); //turn on constant current flag
+					Batt0.Status &= ~(1 << FULLCHARGED); //turn off full charged flag
+				}
+				Batt0 = discharge10A(Batt0);
+			}
+
+			else if ((Batt0.Status & (1 << CPIP))
+					|| !(Batt0.Status & ((1 << WAITING) | (1 << CPDONE))))
+			{
+				//Constant Power Discharge
+				if (!(Batt0.Status & (1 << CPIP)))
+				{
+					Batt0.dutyCycle = CPDutyStartVal;
+					Batt0.Status |= (1 << CPIP);
+					Batt0.Status &= (1 << FULLCHARGED);
+				}
+				Batt0 = discharge30W(Batt0, STOPVOLTAGE);
+			}
+			//End Batt 0
+			//---------------------------------------------------------------
+			//Batt 1
+			//Charge Batt1
+			else if ((Batt1.Status & (1 << CHARGING))
+					|| !(Batt1.Status
+							& ((1 << FULLCHARGED) | (1 << CCIP) | (1 << CPIP)
+									| (1 << WAITING) | (1 << ALLDONE))))
+			{
+				//charge if not in a test, waiting or completely done
+				if (!(Batt1.Status & (1 << CHARGING))) //If charging is not on, then turn it one
+				{
+					turnOffPWM(DISC_EN_1);			//shut down PWM
+					PORTB |= (1 << CHARGE_EN_1);			//turn on charger
+					PORTB &= ~(1 << CHARGE_1_1);//double check that other charging mosfet is off
+					PORTC |= ((1 << CHARGE_2_1) | (1 << BATT_EN_1_1));//enable charging mosfet and make sure batt enable is on(should be by default)
+					Batt1.Status |= CHARGING;
+				}
+				if (Batt1.Status & (1 << CCDONE))
+				{
+					Batt1 = chargeBatt(Batt1, VFULLCHARGE, ICHARGEDONE); //charge to 4.2V
+				}
+				else if (Batt1.Status & (1 << CPDONE))
+				{
+					Batt1 = chargeBatt(Batt1, VSTORAGE, ICHARGESTART); //Charge to storage
+				}
+				if ((Batt1.Status & (1 << FULLCHARGED))
+						|| (Batt1.Status & (1 << ALLDONE)))
+				{
 					Batt1.Status &= ~(1 << FULLCHARGED);
+					PORTB &= ~(1 << CHARGE_EN_1);
+					PORTC &= ~(1 << CHARGE_2_1);
 				}
-				Batt1 = discharge10A(Batt1);
-			}
+				//CC Disc Batt 0
+				else if ((Batt1.Status & (1 << CCIP))
+						|| !(Batt1.Status & ((1 << WAITING) | (1 << CCDONE))))
+				{ //check to make sure not waiting on other battery and not done CC
+				  //Constant Current
+					if (!(Batt1.Status & (1 << CCIP)))
+					{
+						Batt1.dutyCycle = CCDutyStartVal; //start with a duty cycle close to what CC needs it to be
+						Batt1.Status |= (1 << CCIP);
+						Batt1.Status &= ~(1 << FULLCHARGED);
+					}
+					Batt1 = discharge10A(Batt1);
+				}
 
-			else if ((Batt1.Status & (1 << CPIP))
-					|| !(Batt1.Status & ((1 << WAITING) | (1 << CPDONE))))
-			{
+				else if ((Batt1.Status & (1 << CPIP))
+						|| !(Batt1.Status & ((1 << WAITING) | (1 << CPDONE))))
+				{
 //Constant Power Discharge
-				if (!(Batt1.Status & (1 << CPIP)))
-				{
-					Batt1.dutyCycle = CPDutyStartVal;
-					Batt1.Status |= (1 << CPIP);
-					Batt1.Status &= (1 << FULLCHARGED);
+					if (!(Batt1.Status & (1 << CPIP)))
+					{
+						Batt1.dutyCycle = CPDutyStartVal;
+						Batt1.Status |= (1 << CPIP);
+						Batt1.Status &= (1 << FULLCHARGED);
+					}
+					Batt1 = discharge30W(Batt1, STOPVOLTAGE);
 				}
-				Batt1 = discharge30W(Batt1, STOPVOLTAGE);
+
+				//Switch Batteries
+				else if ((Batt0.Status & (1 << ALLDONE))
+						&& (Batt1.Status & (1 << WAITING)))	//if Batt0 is done testing and Batt1 is waiting to be tested, start testing
+				{
+					//above bool states that if you're not doing a test, are fully charged, completely done testing and not waiting for another batteries test
+					Batt1.Status &= ~(1 << WAITING);//stop Batt1 from waiting
+					Batt0.Status |= (1 << WAITING);	//make Batt0 to wait(ensuring that case where Batt0 and Batt1 are both not waiting doesn't happen
+					PORTC &= ~(1 << BATT_EN_1_1);
+					PORTD |= (1 << BATT_EN_2_1);		//swap battery enables
+				}
+				//End Batt1
+				//End Batt0 and Batt1
+				//----------------------------------------------------------------------
+				//Start Batt2 and Batt3
+				//will add once previous if statements are guaranteed to be good
+				if (newSec)
+				{ //only measure temperature once a second
+					Batt0.Temperature = readBattTemp(T_Batt_1);
+					Batt1.Temperature = readBattTemp(T_Batt_2);
+					Batt2.Temperature = readBattTemp(T_Batt_3);
+					Batt3.Temperature = readBattTemp(T_Batt_4);
+					if (Batt0.Temperature >= tCutoff)
+					{
+						Batt0.Failed = true; //end testing
+					}
+					if (Batt1.Temperature >= tCutoff)
+					{
+						Batt1.Failed = true; //end testing
+					}
+					if (Batt2.Temperature >= tCutoff)
+					{
+						Batt2.Failed = true; //end testing
+					}
+					if (Batt3.Temperature >= tCutoff)
+					{
+						Batt3.Failed = true; //end testing
+					}
+
+					//incrementing Time. As mentioned before, there's probably a better way to do this
+					if (Batt0.Status & (1 << CCIP))
+					{ //If you're in a CC test, increment this counter
+						Batt0.CCTime++;
+					}
+					else if (Batt0.Status & (1 << CPIP))
+					{ //If you're in a CP test, increment this counter
+						Batt0.CPTime++;
+					}
+
+					else if (Batt1.Status & (1 << CCIP))
+					{
+						Batt1.CCTime++;
+					}
+					else if (Batt1.Status & (1 << CPIP))
+					{
+						Batt1.CPTime++;
+					}
+
+					if (Batt2.Status & (1 << CCIP))
+					{
+						Batt2.CCTime++;
+					}
+					else if (Batt2.Status & (1 << CPIP))
+					{
+						Batt2.CPTime++;
+					}
+
+					else if (Batt3.Status & (1 << CCIP))
+					{
+						Batt3.CCTime++;
+					}
+					else if (Batt3.Status & (1 << CPIP))
+					{
+						Batt3.CPTime++;
+					}
+					logBattery (Battery); //this is where the battery data should be logged
+
+					newSec = false;
+
+				}
 			}
-
-			//Switch Batteries
-			else if ((Batt0.Status & (1 << ALLDONE))
-					&& (Batt1.Status & (1 << WAITING)))	//if Batt0 is done testing and Batt1 is waiting to be tested, start testing
-			{
-				//above bool states that if you're not doing a test, are fully charged, completely done testing and not waiting for another batteries test
-				Batt1.Status &= ~(1 << WAITING);	//stop Batt1 from waiting
-				Batt0.Status |= (1 << WAITING);	//make Batt0 to wait(ensuring that case where Batt0 and Batt1 are both not waiting doesn't happen
-				PORTC &= ~(1 << BATT_EN_1_1);
-				PORTD |= (1 << BATT_EN_2_1);			//swap battery enables
-			}
-			//End Batt1
-			//End Batt0 and Batt1
-			//----------------------------------------------------------------------
-			//Start Batt2 and Batt3
-
-			if (newSec)
-			{ //only measure temperature once a second
-				Batt0.Temperature = readBattTemp(T_Batt_1);
-				Batt1.Temperature = readBattTemp(T_Batt_2);
-				Batt2.Temperature = readBattTemp(T_Batt_3);
-				Batt3.Temperature = readBattTemp(T_Batt_4);
-				if (Batt0.Temperature >= tCutoff)
-				{
-					Batt0.Failed = true; //end testing
-				}
-				if (Batt1.Temperature >= tCutoff)
-				{
-					Batt1.Failed = true; //end testing
-				}
-				if (Batt2.Temperature >= tCutoff)
-				{
-					Batt2.Failed = true; //end testing
-				}
-				if (Batt3.Temperature >= tCutoff)
-				{
-					Batt3.Failed = true; //end testing
-				}
-
-				//incrementing Time. As mentioned before, there's probably a better way to do this
-				if (Batt0.Status & (1 << CCIP))
-				{ //If you're in a CC test, increment this counter
-					Batt0.CCTime++;
-				}
-				else if (Batt0.Status & (1 << CPIP))
-				{ //If you're in a CP test, increment this counter
-					Batt0.CPTime++;
-				}
-
-				else if (Batt1.Status & (1 << CCIP))
-				{
-					Batt1.CCTime++;
-				}
-				else if (Batt1.Status & (1 << CPIP))
-				{
-					Batt1.CPTime++;
-				}
-
-				if (Batt2.Status & (1 << CCIP))
-				{
-					Batt2.CCTime++;
-				}
-				else if (Batt2.Status & (1 << CPIP))
-				{
-					Batt2.CPTime++;
-				}
-
-				else if (Batt3.Status & (1 << CCIP))
-				{
-					Batt3.CCTime++;
-				}
-				else if (Batt3.Status & (1 << CPIP))
-				{
-					Batt3.CPTime++;
-				}
-				logBattery (Battery); //this is where the battery data should be logged
-
-				newSec = false;
-
-			}
+			turnOffPWM(DISC_EN_1);
+			turnOffPWM(DISC_EN_2); //double check that PWM is off
+			PORTC &= ~((1 << BATT_EN_1_1) | (1 << BATT_EN_2_2));
+			PORTD &= ~((1 << BATT_EN_2_1) | (BATT_EN_1_2)); //Double check that everything is off
+			while(Serial1.read() == 'r'); // prototype for waiting until restart command is sent
 		}
 		return 1;
 	}

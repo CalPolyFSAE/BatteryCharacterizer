@@ -25,8 +25,12 @@ void logBattery(struct Battery Batt)
 	float16(&temperature, float(Batt.Temperature));
 	Serial1.write(voltage); //this is wrong, but need to get the point across
 }
+/**NOTE:I changed the bottom two things
+ *
+ */
 
-/**Devin: There are a few things that I need you to help me with here:
+
+/**Devin and any other people in Code team: There are a few things that I need you to help me with here:
  * 1. I'm not sure if the Serial functions will work at all. They are from the Arduino Library, but I'm still dubious as to whether
  * they work or not, please see if they will work, and if not, please implement them
  * 2. I need to log to be written out for the logBattery function: This is how it will work:
@@ -41,11 +45,9 @@ void logBattery(struct Battery Batt)
  * by the FTDI 232RL chip, which should be relaying exactly what is send by UART. to be written to be analyzed. There is a program or
  * something by FTDI that helps pull the UART data I think, you can look it up, I don't know the specifics.
  * This is the analysis that needs to be done:
- * 		When the CPDONE flag goes high for a battery, I need to either sum all of the power readings from the CPTime was 0 to when CPDone goes high, or multiply the CPTime Value by 30. This is my power reading
- * 		I haven't decided exactly how I want to handle the CCDONE Flag so, hold tight on that one, I might ask you for suggestions actually
- * If you're unsure of exactly what I want or maybe think that there's a better way, but my explanation are off, ask me to show you exactly what the code is supposed to do
- * There should be an explanation of what the code should do in the main.cpp header
- * 6. I would like you to look through my code and help find any weird things that are going on in it, basically help me find any errors
+ * 		When the CPDONE flag goes high for a battery, I need the CPTime value to be stored and multiplied by 30
+ * 		When the CCDONE flag goes high, I need to record the CCENDVoltage reading.
+ * 	If you could look up how I can send a command or text through terminal to the chip, that would also help me a bunch
  */
 
 
