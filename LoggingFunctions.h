@@ -13,8 +13,6 @@ uint32_t sendData (uint8_t Batt, uint32_t Data){
 	for (uint8_t i = 0; i < 4; i ++){
 	c = Data >> i * 8;
 	Serial1.write(c); //I don't know how Serial1write works, but I may have to add serial read
-	Received = Serial1.read() << ((4 - i) * 8); //send msgs MSB first with first message being MSB
-												//this function here allows us to write another message
 	}
 	return Received;
 }
@@ -24,7 +22,7 @@ void logBattery(struct Battery Batt)
 	uint16_t voltage, current, temperature;
 	float16(&voltage, (float(Batt.Voltage) / 1000));
 	float16(&current, (float(Batt.Current) / 1000));
-	float16(&temperature, float(calcThermTemp(Batt.Temperature)));
+	float16(&temperature, float(Batt.Temperature));
 	Serial1.write(voltage); //this is wrong, but need to get the point across
 }
 
